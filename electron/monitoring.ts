@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
-import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provider, ProviderTarget } from '../shared/desktop';
+import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provider, ProviderTarget, RuntimeEvent } from '../shared/desktop';
 import { publicRequest, validatePublicUrl, type NetworkResponse } from './network';
 
 type Request = typeof publicRequest;
@@ -48,11 +48,15 @@ function providerUrl(provider: Provider, path: string, teamId?: string): URL {
   return url;
 }
 
-async function providerRequest(url: URL, token: string, send: Request): Promise<NetworkResponse> {
+async function providerRequest(
+  url: URL, token: string, send: Request,
+  options: { signal?: AbortSignal; onJsonLine?: (value: unknown) => void } = {},
+): Promise<NetworkResponse> {
   if (!token.trim()) throw new Error('A provider token is required. Connect this application again.');
   const response = await send(url.href, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    signal: AbortSignal.timeout(15000),
+    headers: { Authorization: `Bearer ${token}`, Accept: options.onJsonLine ? 'application/stream+json' : 'application/json' },
+    signal: options.signal ?? AbortSignal.timeout(15000),
+    onJsonLine: options.onJsonLine,
   });
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`Provider returned HTTP ${response.status}. ${response.status === 401 || response.status === 403 ? 'Check your token and account permissions.' : 'Try again later.'}`);
@@ -101,6 +105,7 @@ export async function deployments(target: ProviderTarget, token: string, send: R
   if (target.provider === 'vercel') {
     url.searchParams.set('projectId', target.targetId);
     url.searchParams.set('limit', '10');
+    if (target.environment && target.environment !== 'development') url.searchParams.set('target', target.environment);
   } else url.searchParams.set('per_page', '10');
   const data = JSON.parse((await providerRequest(url, token, send)).body);
   const list = target.provider === 'vercel' ? data.deployments : data;
@@ -112,6 +117,84 @@ export async function deployments(target: ProviderTarget, token: string, send: R
     commit: item.meta?.githubCommitSha || item.commit_ref,
     createdAt: typeof item.created === 'number' ? item.created : Date.parse(item.created_at) || Date.now(),
   }));
+}
+
+export async function runtimeDeployment(
+  target: ProviderTarget, token: string, send: Request = publicRequest,
+): Promise<string | null> {
+  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
+  if (target.environment !== 'preview') {
+    const url = providerUrl('vercel', `/v9/projects/${encodeURIComponent(target.targetId)}`, target.teamId);
+    const project = JSON.parse((await providerRequest(url, token, send)).body);
+    const id = project.targets?.production?.id;
+    if (id !== undefined && typeof id !== 'string') throw new Error('The provider returned an unexpected production deployment.');
+    return id || null;
+  }
+  const url = providerUrl('vercel', '/v6/deployments', target.teamId);
+  url.searchParams.set('projectId', target.targetId);
+  url.searchParams.set('target', 'preview');
+  url.searchParams.set('state', 'READY');
+  url.searchParams.set('limit', '1');
+  const data = JSON.parse((await providerRequest(url, token, send)).body);
+  if (!Array.isArray(data.deployments)) throw new Error('The provider returned an unexpected deployment list.');
+  const id = data.deployments[0]?.uid;
+  if (id !== undefined && typeof id !== 'string') throw new Error('The provider returned an unexpected preview deployment.');
+  return id || null;
+}
+
+export function runtimeEvent(value: unknown): RuntimeEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const entry = value as Record<string, unknown>;
+  if (entry.source === 'delimiter') {
+    if (entry.level === 'error' || entry.level === 'fatal') {
+      throw new Error(typeof entry.message === 'string' ? entry.message : 'Vercel stopped the runtime log stream.');
+    }
+    return null;
+  }
+  if (typeof entry.rowId !== 'string' || !entry.rowId ||
+      typeof entry.timestampInMs !== 'number' || !Number.isFinite(entry.timestampInMs) ||
+      typeof entry.message !== 'string') return null;
+  const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'];
+  const method = typeof entry.requestMethod === 'string' && methods.includes(entry.requestMethod)
+    ? entry.requestMethod as RuntimeEvent['method'] : undefined;
+  const path = typeof entry.requestPath === 'string' ? entry.requestPath : undefined;
+  const message = entry.message || (entry.source === 'request' && path ? `${method || 'Request'} ${path}` : '');
+  if (!message.trim()) return null;
+  return {
+    id: entry.rowId, timestamp: entry.timestampInMs, message,
+    level: entry.level === 'error' || entry.level === 'fatal' ? 'error'
+      : entry.level === 'warning' || entry.level === 'warn' ? 'warn'
+      : entry.level === 'debug' || entry.level === 'trace' ? 'debug' : 'info',
+    source: entry.source === 'serverless' ? 'serverless'
+      : entry.source === 'edge-function' || entry.source === 'edge-middleware' ? 'edge' : 'runtime',
+    method, path,
+    host: typeof entry.domain === 'string' ? entry.domain : undefined,
+    statusCode: typeof entry.responseStatusCode === 'number' && Number.isInteger(entry.responseStatusCode) &&
+      entry.responseStatusCode >= 100 && entry.responseStatusCode <= 599 ? entry.responseStatusCode : undefined,
+    messageTruncated: entry.messageTruncated === true,
+  };
+}
+
+export async function streamRuntimeLogs(
+  target: ProviderTarget & { deploymentId: string }, token: string,
+  onLog: (event: RuntimeEvent) => void, signal: AbortSignal, send: Request = publicRequest,
+): Promise<void> {
+  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  signal.throwIfAborted();
+  const url = providerUrl('vercel',
+    `/v1/projects/${encodeURIComponent(target.targetId)}/deployments/${encodeURIComponent(target.deploymentId)}/runtime-logs`,
+    target.teamId);
+  // Vercel's own CLI uses this parameter for newline-delimited JSON.
+  url.searchParams.set('format', 'lines');
+  await providerRequest(url, token, send, {
+    signal,
+    onJsonLine: value => {
+      signal.throwIfAborted();
+      const event = runtimeEvent(value);
+      if (event) onLog(event);
+    },
+  });
 }
 
 export async function events(

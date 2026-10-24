@@ -7,8 +7,8 @@ import { getDesktop } from '../../desktop/infrastructure/DesktopBridge';
 const metadata: Record<ProviderType, ProviderMetadata> = {
   vercel: {
     id: 'vercel', name: 'Vercel', icon: '▲', status: 'active',
-    description: 'Deployment status, build logs and public URL health checks.',
-    supportedSources: ['build', 'probe'],
+    description: 'Deployment status, build logs, live runtime logs and public URL health checks.',
+    supportedSources: ['build', 'runtime', 'edge', 'serverless', 'probe'],
     docUrl: 'https://vercel.com/docs/deployments/logs',
     tokenGuideUrl: 'https://vercel.com/account/tokens',
   },
@@ -73,7 +73,10 @@ export class ProviderAdapter implements IProviderAdapter {
   private target(app: Application): ProviderTarget {
     const targetId = this.provider === 'vercel' ? app.config.vercelProjectId : app.config.netlifySiteId;
     if (!targetId || !app.config.credentialId) throw new Error('Connect a provider account to sync deployments.');
-    return { provider: this.provider, targetId, credentialId: app.config.credentialId, teamId: app.config.vercelTeamId };
+    return {
+      provider: this.provider, targetId, credentialId: app.config.credentialId,
+      teamId: app.config.vercelTeamId, environment: app.environment,
+    };
   }
 
   async checkDeploymentStatus(app: Application, onLog: (entry: LogEntry) => void): Promise<void> {
@@ -120,8 +123,57 @@ export class ProviderAdapter implements IProviderAdapter {
 
   subscribeLogs(app: Application, onLog: (entry: LogEntry) => void): () => void {
     let active = true;
+    let runtimeStop: (() => void) | undefined;
+    let runtimeDeploymentId: string | null = null;
+    let runtimeGeneration = 0;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const emit = (entry: LogEntry) => { if (active) onLog(entry); };
+    const stopRuntime = () => {
+      runtimeGeneration++;
+      runtimeStop?.();
+      runtimeStop = undefined;
+    };
+    const runtimeWarning = (message: string) => emit(this.entry(app, {
+      id: `${app.id}:runtime-unavailable:${message}`,
+      source: 'runtime', level: 'warn', message,
+    }));
+    const syncRuntime = async () => {
+      try {
+        const target = this.target(app);
+        const deploymentId = await this.desktop().runtimeDeployment(target);
+        if (!active) return;
+        if (!deploymentId) {
+          stopRuntime();
+          runtimeDeploymentId = null;
+          runtimeWarning(`No ${app.environment} deployment available for live runtime logs.`);
+          return;
+        }
+        if (runtimeStop && runtimeDeploymentId === deploymentId) return;
+        stopRuntime();
+        runtimeDeploymentId = deploymentId;
+        const version = runtimeGeneration;
+        runtimeStop = this.desktop().subscribeRuntimeLogs({ ...target, deploymentId }, event => {
+          if (!active || version !== runtimeGeneration) return;
+          const { id, messageTruncated, ...fields } = event;
+          emit(this.entry(app, {
+            ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`,
+            payload: { deploymentId, messageTruncated },
+          }));
+        }, message => {
+          if (!active || version !== runtimeGeneration) return;
+          stopRuntime();
+          runtimeWarning(`Runtime log access unavailable: ${message} Retrying automatically.`);
+        });
+        emit(this.entry(app, {
+          id: `${app.id}:runtime-following:${deploymentId}`,
+          source: 'runtime', level: 'info',
+          message: `Connecting to live runtime logs for deployment ${deploymentId}. Waiting for new requests or console output.`,
+          payload: { deploymentId },
+        }));
+      } catch (error) {
+        runtimeWarning(`Runtime log access unavailable: ${error instanceof Error ? error.message : 'Unexpected error.'} Retrying automatically.`);
+      }
+    };
     const schedule = (action: () => Promise<void>, delay: number) => {
       const run = async () => {
         if (!active) return;
@@ -135,8 +187,14 @@ export class ProviderAdapter implements IProviderAdapter {
     };
     if (app.deploymentUrl) schedule(() => this.triggerHealthProbe(app, emit), 15000);
     if (app.config.connectionMode === 'account') schedule(() => this.checkDeploymentStatus(app, emit), 30000);
+    if (app.config.connectionMode === 'account' && this.provider === 'vercel') {
+      if (app.environment === 'development') {
+        runtimeWarning('Vercel runtime logs require a production or preview deployment, not local development.');
+      } else schedule(syncRuntime, 30000);
+    }
     return () => {
       active = false;
+      stopRuntime();
       timers.forEach(clearTimeout);
       timers.clear();
     };

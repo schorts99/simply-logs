@@ -38,6 +38,26 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
       ipcMain.handle('providers:events', () => [{
         id: 'event-fixture', timestamp: Date.now(), level: 'info', message: 'Actual provider build event fixture',
       }]);
+      ipcMain.removeHandler('providers:runtime-deployment');
+      ipcMain.handle('providers:runtime-deployment', () => 'deploy-fixture');
+      ipcMain.removeHandler('providers:runtime-start');
+      const runtimeState = { started: [] as string[], stopped: [] as string[] };
+      (globalThis as any).__runtimeTest = runtimeState;
+      ipcMain.handle('providers:runtime-start', (event, input) => {
+        runtimeState.started.push(input.subscriptionId);
+        event.sender.send('providers:runtime-update', {
+          subscriptionId: input.subscriptionId,
+          event: {
+            id: 'runtime-fixture', timestamp: Date.now(), level: 'error', source: 'serverless',
+            message: 'Actual provider runtime output fixture', method: 'POST', path: '/api/test',
+            statusCode: 500, host: 'account.example.com', messageTruncated: false,
+          },
+        });
+      });
+      ipcMain.removeHandler('providers:runtime-stop');
+      ipcMain.handle('providers:runtime-stop', (_event, subscriptionId: string) => {
+        runtimeState.stopped.push(subscriptionId);
+      });
     });
     const page = await app.firstWindow();
     const workspace = page.getByRole('main');
@@ -95,6 +115,28 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await page.getByRole('button', { name: 'Account app', exact: true }).click();
     await page.getByRole('button', { name: 'Add application', exact: true }).click();
     await expect(page.getByText('Actual provider build event fixture')).toBeVisible();
+    await expect(page.getByText('Actual provider runtime output fixture')).toBeVisible();
+    await page.getByRole('button', { name: 'serverless', exact: true }).click();
+    await expect(page.getByText('Actual provider runtime output fixture')).toBeVisible();
+    await expect(page.getByText('Actual provider build event fixture')).toHaveCount(0);
+    await page.getByRole('button', { name: 'build', exact: true }).click();
+    await expect(page.getByText('Actual provider build event fixture')).toBeVisible();
+    await expect(page.getByText('Actual provider runtime output fixture')).toHaveCount(0);
+    await page.getByRole('button', { name: 'serverless', exact: true }).click();
+    const firstRuntimeSubscription = await app.evaluate(() => (globalThis as any).__runtimeTest.started[0] as string);
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect.poll(() => app.evaluate((_electron, id) => (globalThis as any).__runtimeTest.stopped.includes(id), firstRuntimeSubscription)).toBe(true);
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await expect(page.getByText('Actual provider runtime output fixture')).toHaveCount(1);
+    await app.evaluate(({ BrowserWindow }, subscriptionId) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('providers:runtime-update', {
+        subscriptionId, event: {
+          id: 'late-fixture', timestamp: Date.now(), source: 'serverless', level: 'info',
+          message: 'Late output from cancelled stream', messageTruncated: false,
+        },
+      });
+    }, firstRuntimeSubscription);
+    await expect(page.getByText('Late output from cancelled stream')).toHaveCount(0);
     expect(await page.evaluate(() => Object.values(localStorage).join(''))).not.toContain('placeholder-desktop-test-token');
     await page.screenshot({ path: info.outputPath('workspace.png') });
 
@@ -104,6 +146,11 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await page.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Add your first application' })).toBeVisible();
     await expect(page.getByText('Actual provider build event fixture')).toHaveCount(0);
+    await expect(page.getByText('Actual provider runtime output fixture')).toHaveCount(0);
+    await expect.poll(() => app.evaluate(() => {
+      const state = (globalThis as any).__runtimeTest;
+      return state.started.every((id: string) => state.stopped.includes(id));
+    })).toBe(true);
     await expect(workspace.getByText(/^GET https:\/\//)).toHaveCount(0);
     await page.screenshot({ path: info.outputPath('desktop.png') });
     expect(errors).toEqual([]);

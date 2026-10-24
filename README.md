@@ -2,7 +2,7 @@
 
 <img src="public/icon.svg" width="88" alt="Simply Logs: a cat with terminal log lines" />
 
-A local-first Electron app for Windows, Linux, and macOS. Follow deployment activity, inspect build logs, and check public application health with a small cat companion. The operating system provides real window controls; there is no window-style preview switch.
+A local-first Electron app for Windows, Linux, and macOS. Follow deployment activity, inspect build and live Vercel runtime logs, and check public application health with a small cat companion. The operating system provides real window controls; there is no window-style preview switch.
 
 On Windows, the File/Edit/View menu bar is hidden, including when pressing Alt; its keyboard shortcuts remain available. macOS and Linux keep their native menus.
 
@@ -18,9 +18,13 @@ npm run dev
 Create a project, then add an application:
 
 - **Public URL health checks:** enter a real public HTTPS URL. Checks run every 15 seconds, one at a time per application.
-- **Provider account:** enter a Vercel or Netlify personal access token and discover your applications, or supply a project/site ID. Deployment status syncs every 30 seconds. Vercel also retrieves up to 1,000 recent build events per poll. Vercel teams are supported; account discovery follows pagination.
+- **Provider account:** enter a Vercel or Netlify personal access token and discover your applications, or supply a project/site ID. Deployment status syncs every 30 seconds. Vercel also retrieves up to 1,000 recent build events per poll and streams new runtime logs directly from its authenticated API. Vercel teams are supported; account discovery follows pagination.
 
-Netlify's public REST API does not expose readable build logs; view those in the Netlify dashboard. Vercel build-log access depends on token permissions. Failed requests are shown explicitly; they never become successful deployments. This app does **not** invent runtime traffic or provide complete provider runtime-log ingestion. Health-check latency and failure percentages describe the checks themselves, not your application's request throughput.
+Netlify's public REST API does not expose readable build logs; view those in the Netlify dashboard. Netlify runtime logs are not supported. Vercel build/runtime-log access depends on token permissions and provider limits. Failed requests are shown explicitly; they never become successful deployments. Health-check latency and failure percentages describe the checks themselves, not your application's request throughput.
+
+For **Vercel runtime logs**, edit the application and select **Provider account + health**, then connect a token and project (plus Team ID when needed). Production follows the project's active production deployment, including promotions/rollbacks; preview follows its latest ready preview deployment. Selection is refreshed every 30 seconds. Local development logs are unsupported. Generate requests or `console.log` output after connecting; a quiet app may have no new logs. Use the `runtime`, `serverless`, or `edge` source filters to separate runtime stream status, function logs, and edge logs from build/probe entries. Request metadata, provider severity, timestamps and truncation flags are retained in the viewer/export.
+
+Runtime logs use Vercel's [deployment runtime-log stream](https://vercel.com/docs/rest-api/logs/get-logs-for-a-deployment), not a Log Drain, and need no hosted receiver. This is a live stream, **not historical backfill or guaranteed complete ingestion**: reconnects, deployment switches and provider limits can leave gaps. Ended/failed streams produce warnings and retry automatically on the next deployment refresh. Pause, project changes, application edits, window reloads and window closure cancel old streams and ignore late events. URL-only health checks do not retrieve application logs; use the deployed public URL, not a Vercel dashboard/login URL.
 
 Projects and environment selection scope the log viewer, counters, exports, and manual actions. Background monitoring watches all applications in the selected project. Switching projects discards the previous project's in-memory log buffer. The buffer holds up to 1,000 entries; export JSON using the toolbar to keep a record.
 
@@ -34,7 +38,7 @@ Tokens stay in the Electron main process. When the OS keychain is available, Ele
 
 Renderer storage contains project configuration and credential identifiers, never new plaintext tokens. Legacy plaintext tokens are migrated into the credential vault; old sample applications are removed. Storage errors are reported rather than replaced with sample data. OS notification permissions are managed in system settings.
 
-The renderer is sandboxed, has no Node.js access, cannot make production network requests, and uses a narrow, sender-validated IPC bridge. There is no HTTP proxy or listening production server. Outbound requests require public HTTPS destinations, reject private/reserved IPs and custom ports, pin validated DNS addresses, revalidate redirects, limit response size, and time out. Private/local development services and self-signed HTTPS are deliberately unsupported.
+The renderer is sandboxed, has no Node.js access, cannot make production network requests, and uses a narrow, sender-validated IPC bridge. There is no HTTP proxy or listening production server. Outbound requests require public HTTPS destinations, reject private/reserved IPs and custom ports, pin validated DNS addresses, revalidate redirects, limit response size, and time out. Runtime streams remain open while monitoring is active, with a 2 MB limit per JSON line instead of a total response-size limit or an idle timeout. Private/local development services and self-signed HTTPS are deliberately unsupported.
 
 Application data normally lives under `%APPDATA%/Simply Logs` (Windows), `~/Library/Application Support/Simply Logs` (macOS), or `~/.config/Simply Logs` (Linux). Do not delete these directories to update the app.
 

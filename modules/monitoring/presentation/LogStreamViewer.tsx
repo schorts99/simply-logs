@@ -341,7 +341,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
         {/* Sources */}
         <div className="flex items-center gap-1">
           <span className="text-[10px] uppercase text-neutral-400 font-semibold mr-1">Source:</span>
-          {(['all', 'probe', 'build'] as const).map(src => (
+          {(['all', 'probe', 'build', 'runtime', 'serverless', 'edge'] as const).map(src => (
             <button
               key={src}
               onClick={() => setSelectedSource(src)}

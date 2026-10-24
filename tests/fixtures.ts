@@ -27,6 +27,8 @@ export function desktop(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     discover: async () => [],
     deployments: async () => [],
     events: async () => [],
+    runtimeDeployment: async () => null,
+    subscribeRuntimeLogs: () => () => {},
     probe: async () => ({
       success: true, statusCode: 200, latencyMs: 20, region: 'iad1', server: 'Vercel',
       cacheStatus: 'MISS', headers: {}, timestamp: Date.now(),

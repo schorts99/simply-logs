@@ -14,6 +14,7 @@ export interface ProviderTarget {
   targetId: string;
   credentialId: string;
   teamId?: string;
+  environment?: 'production' | 'preview' | 'development';
 }
 
 export interface Deployment {
@@ -29,6 +30,19 @@ export interface BuildEvent {
   timestamp: number;
   message: string;
   level: 'info' | 'warn' | 'error';
+}
+
+export interface RuntimeEvent {
+  id: string;
+  timestamp: number;
+  message: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  source: 'runtime' | 'edge' | 'serverless';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
+  path?: string;
+  host?: string;
+  statusCode?: number;
+  messageTruncated: boolean;
 }
 
 export interface ProbeResult {
@@ -48,6 +62,12 @@ export interface DesktopBridge {
   discover(input: { provider: Provider; apiToken: string; teamId?: string }): Promise<DiscoveredApplication[]>;
   deployments(input: ProviderTarget): Promise<Deployment[]>;
   events(input: ProviderTarget & { deploymentId: string }): Promise<BuildEvent[]>;
+  runtimeDeployment(input: ProviderTarget): Promise<string | null>;
+  subscribeRuntimeLogs(
+    input: ProviderTarget & { deploymentId: string },
+    onLog: (event: RuntimeEvent) => void,
+    onError: (message: string) => void,
+  ): () => void;
   probe(url: string): Promise<ProbeResult>;
   saveCredential(id: string, token: string): Promise<{ persistent: boolean }>;
   deleteCredential(id: string): Promise<void>;

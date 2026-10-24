@@ -27,6 +27,28 @@ export interface NetworkResponse {
   body: string;
 }
 
+export async function readJsonLines(
+  chunks: AsyncIterable<Uint8Array>,
+  onValue: (value: unknown) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  let pending = '';
+  const consume = (line: string) => {
+    if (Buffer.byteLength(line, 'utf8') > 2 * 1024 * 1024) throw new Error('Runtime log line exceeded the 2 MB limit.');
+    if (line.trim()) onValue(JSON.parse(line));
+  };
+  for await (const chunk of chunks) {
+    pending += decoder.decode(chunk, { stream: true });
+    let end: number;
+    while ((end = pending.indexOf('\n')) !== -1) {
+      consume(pending.slice(0, end));
+      pending = pending.slice(end + 1);
+    }
+    if (Buffer.byteLength(pending, 'utf8') > 2 * 1024 * 1024) throw new Error('Runtime log line exceeded the 2 MB limit.');
+  }
+  consume(pending + decoder.decode());
+}
+
 export async function resolvePublicHost(
   hostname: string,
   signal: AbortSignal,
@@ -50,11 +72,17 @@ export async function resolvePublicHost(
 
 export async function publicRequest(
   input: string,
-  options: { headers?: Record<string, string>; headersOnly?: boolean; signal?: AbortSignal; redirects?: number } = {},
+  options: {
+    headers?: Record<string, string>; headersOnly?: boolean; signal?: AbortSignal; redirects?: number;
+    onJsonLine?: (value: unknown) => void;
+  } = {},
 ): Promise<NetworkResponse> {
   const url = validatePublicUrl(input);
   const signal = options.signal ?? AbortSignal.timeout(8000);
-  const address = await resolvePublicHost(url.hostname.replace(/^\[|\]$/g, ''), signal);
+  const address = await resolvePublicHost(
+    url.hostname.replace(/^\[|\]$/g, ''),
+    AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+  );
 
   const result = await new Promise<NetworkResponse>((resolve, reject) => {
     const req = request(url, {
@@ -74,6 +102,12 @@ export async function publicRequest(
       if (options.headersOnly || (response.status >= 300 && response.status < 400)) {
         resolve(response);
         res.destroy();
+        return;
+      }
+      if (options.onJsonLine && response.status >= 200 && response.status < 300) {
+        // Runtime streams can be idle indefinitely; their owner cancels them on unsubscribe.
+        req.setTimeout(0);
+        void readJsonLines(res, options.onJsonLine).then(() => resolve(response), reject);
         return;
       }
       const chunks: Buffer[] = [];

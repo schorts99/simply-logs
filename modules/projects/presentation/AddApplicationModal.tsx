@@ -142,9 +142,10 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
                   <input aria-label={provider === 'vercel' ? 'Project ID' : 'Site ID'} value={targetId} onChange={event => setTargetId(event.target.value)} className={`${inputClass} mt-1`} placeholder="Select above or enter the provider ID" />
                 </label>
                 <p className="text-[11px] text-neutral-500">Tokens are never saved in browser storage. They use your OS keychain, or stay in memory when secure storage is unavailable.</p>
-                <p className="text-[11px] text-neutral-500">{provider === 'vercel' ? 'Includes deployment status and recent build logs.' : 'Includes deployment status. Netlify build logs must be viewed in its dashboard.'}</p>
+                <p className="text-[11px] text-neutral-500">{provider === 'vercel' ? 'Includes deployment status, recent build logs and live runtime logs. Production follows the active deployment; preview follows the latest ready preview. Runtime logs require token access and are not available for local development.' : 'Includes deployment status. Netlify build logs must be viewed in its dashboard; runtime logs are not supported.'}</p>
               </div>
             )}
+            {mode === 'url' && <p className="text-[11px] text-neutral-500">URL-only monitoring checks health, not application logs. Connect a Vercel provider account for build and live runtime logs.</p>}
             <label className="text-xs block" htmlFor="app-name">Application name
               <input data-autofocus id="app-name" required maxLength={100} value={name} onChange={event => setName(event.target.value)} className={`${inputClass} mt-1`} placeholder="e.g. My storefront" />
             </label>

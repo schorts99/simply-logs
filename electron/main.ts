@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile } from 'node:fs/promises';
 import type { Provider, ProviderTarget } from '../shared/desktop';
 import { CredentialStore } from './credentials';
-import { discover, deployments, events, probe } from './monitoring';
+import { discover, deployments, events, probe, runtimeDeployment, streamRuntimeLogs } from './monitoring';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const developmentUrl = !app.isPackaged ? process.env.SIMPLY_LOGS_DEV_URL : undefined;
@@ -16,6 +16,12 @@ if (dataPath && path.isAbsolute(dataPath)) app.setPath('userData', dataPath);
 app.setAppUserModelId('app.simplylogs.desktop');
 let window: BrowserWindow | null = null;
 const notifications = new Set<Notification>();
+const runtimeStreams = new Map<string, AbortController>();
+
+function stopRuntimeStreams(): void {
+  runtimeStreams.forEach(controller => controller.abort());
+  runtimeStreams.clear();
+}
 
 function text(value: unknown, max = 1024): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error('Invalid input.');
@@ -30,11 +36,15 @@ function provider(value: unknown): Provider {
 function target(value: unknown): ProviderTarget {
   if (!value || typeof value !== 'object') throw new Error('Invalid provider target.');
   const input = value as Record<string, unknown>;
+  if (input.environment !== undefined && !['production', 'preview', 'development'].includes(String(input.environment))) {
+    throw new Error('Invalid deployment environment.');
+  }
   return {
     provider: provider(input.provider),
     targetId: text(input.targetId, 256),
     credentialId: text(input.credentialId, 256),
     teamId: input.teamId ? text(input.teamId, 256) : undefined,
+    environment: input.environment as ProviderTarget['environment'],
   };
 }
 
@@ -75,7 +85,9 @@ async function createWindow(): Promise<void> {
   });
   if (process.platform === 'win32') window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window?.show());
-  window.on('closed', () => { window = null; });
+  window.on('closed', () => { stopRuntimeStreams(); window = null; });
+  window.webContents.on('did-start-loading', stopRuntimeStreams);
+  window.webContents.on('render-process-gone', stopRuntimeStreams);
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -128,6 +140,40 @@ else {
     handle('providers:events', async input => {
       const selected = target(input);
       return events({ ...selected, deploymentId: text(input.deploymentId, 256) }, await credentials.get(selected.credentialId));
+    });
+    handle('providers:runtime-deployment', async input => {
+      const selected = target(input);
+      return runtimeDeployment(selected, await credentials.get(selected.credentialId));
+    });
+    handle('providers:runtime-start', input => {
+      const selected = target(input);
+      const deploymentId = text(input.deploymentId, 256);
+      const subscriptionId = text(input.subscriptionId, 256);
+      if (runtimeStreams.has(subscriptionId)) throw new Error('Runtime subscription already exists.');
+      if (runtimeStreams.size >= 100) throw new Error('Too many runtime log subscriptions.');
+      const controller = new AbortController();
+      runtimeStreams.set(subscriptionId, controller);
+      const sender = window!.webContents;
+      const send = (update: object) => {
+        if (!controller.signal.aborted && !sender.isDestroyed()) {
+          sender.send('providers:runtime-update', { subscriptionId, ...update });
+        }
+      };
+      void (async () => {
+        const token = await credentials.get(selected.credentialId);
+        await streamRuntimeLogs({ ...selected, deploymentId }, token, event => send({ event }), controller.signal);
+        send({ error: 'Runtime log stream ended.' });
+      })().catch(error => {
+        send({ error: error instanceof Error ? error.message : 'Runtime log connection failed.' });
+      }).finally(() => {
+        controller.abort();
+        if (runtimeStreams.get(subscriptionId) === controller) runtimeStreams.delete(subscriptionId);
+      });
+    });
+    handle('providers:runtime-stop', id => {
+      const subscriptionId = text(id, 256);
+      runtimeStreams.get(subscriptionId)?.abort();
+      runtimeStreams.delete(subscriptionId);
     });
     handle('monitor:probe', url => probe(text(url, 2048)));
     handle('credentials:save', (id, token) => credentials.save(text(id, 256), text(token, 4096)));
