@@ -15,7 +15,7 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "engines": {
-    "node": ">=22.12"
+    "node": "^26.0.0"
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -32,7 +32,7 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^22.14.0",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
