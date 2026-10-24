@@ -8,6 +8,18 @@ const bridge: DesktopBridge = {
   deployments: input => ipcRenderer.invoke('providers:deployments', input),
   events: input => ipcRenderer.invoke('providers:events', input),
   runtimeDeployment: input => ipcRenderer.invoke('providers:runtime-deployment', input),
+  loadRuntimeHistory: (input, onHistory, onError) => {
+    const subscriptionId = crypto.randomUUID();
+    let active = true;
+    void ipcRenderer.invoke('providers:runtime-history', { ...input, subscriptionId }).then(
+      history => { if (active) onHistory(history); },
+      error => { if (active) onError(error instanceof Error ? error.message : 'Runtime history could not be loaded.'); },
+    );
+    return () => {
+      active = false;
+      void ipcRenderer.invoke('providers:runtime-stop', subscriptionId).catch(() => {});
+    };
+  },
   subscribeRuntimeLogs: (input, onLog, onError) => {
     const subscriptionId = crypto.randomUUID();
     let active = true;

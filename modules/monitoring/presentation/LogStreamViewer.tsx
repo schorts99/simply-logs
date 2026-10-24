@@ -260,7 +260,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
 
           <button
             onClick={onClearLogs}
-            title="Clear current log buffer"
+            title="Clear this project's logs and saved history"
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-neutral-500 hover:text-rose-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />

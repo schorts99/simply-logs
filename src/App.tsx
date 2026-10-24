@@ -40,6 +40,7 @@ function MainApp() {
   const [loadingApps, setLoadingApps] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'probe' | 'deployments' | null>(null);
   const [appModal, setAppModal] = useState<Application | 'new' | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -53,8 +54,9 @@ function MainApp() {
 
   useEffect(() => {
     let canceled = false;
-    projectRepository.getProjects().then(items => {
+    Promise.all([projectRepository.getProjects(), projectRepository.getApplications()]).then(([items, apps]) => {
       if (canceled) return;
+      logStreamService.retainApplications(apps.map(app => app.id));
       setProjects(items);
       setProjectId(items[0]?.id || null);
     }).catch(cause => { if (!canceled) setError(message(cause)); })
@@ -86,9 +88,10 @@ function MainApp() {
     });
     const notifications = notificationService.subscribe(items => setUnread(items.filter(item => !item.read).length));
     const settings = notificationService.subscribeSettings(value => setSoundEnabled(value.soundAlerts));
+    const historyErrors = logStreamService.subscribeStorageErrors(setHistoryError);
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => {
-      unsub(); entries(); notifications(); settings(); clearInterval(timer); logStreamService.dispose();
+      unsub(); entries(); notifications(); settings(); historyErrors(); clearInterval(timer); logStreamService.dispose();
     };
   }, []);
 
@@ -115,7 +118,7 @@ function MainApp() {
   const activeApp = currentApplications.find(app => app.id === selectedAppId) || null;
   const visibleApps = currentApplications.filter(app => activeEnv === 'all' || app.environment === activeEnv);
   const scopedLogs = useMemo(() => scopeLogs(logs, applications.filter(app => app.projectId === projectId), activeEnv, selectedAppId), [logs, applications, projectId, activeEnv, selectedAppId]);
-  const logsPerSec = scopedLogs.filter(log => now - log.timestamp < 3000).length / 3;
+  const logsPerSec = scopedLogs.filter(log => !log.payload?.historical && now - log.timestamp < 3000).length / 3;
   const recentError = scopedLogs.some(log => log.observation === 'unhealthy' && now - log.timestamp < 6000);
   const catMood = companionService.calculateMood(isStreaming && visibleApps.length > 0, logsPerSec, recentError, catHappyUntil);
   const handlePet = useCallback(() => setCatHappyUntil(companionService.pet(notificationService.getSettings().soundAlerts)), []);
@@ -138,7 +141,9 @@ function MainApp() {
 
   const refreshApps = async () => {
     if (!projectId) return;
-    const items = await projectRepository.getApplications(projectId);
+    const allApps = await projectRepository.getApplications();
+    logStreamService.retainApplications(allApps.map(app => app.id));
+    const items = allApps.filter(app => app.projectId === projectId);
     setApplications(items);
     notificationService.syncApplications(items.map(app => app.id));
     logStreamService.syncApplications(items);
@@ -193,7 +198,8 @@ function MainApp() {
     catch (cause) { setError(message(cause)); }
     finally {
       try {
-        const items = await projectRepository.getProjects();
+        const [items, apps] = await Promise.all([projectRepository.getProjects(), projectRepository.getApplications()]);
+        logStreamService.retainApplications(apps.map(app => app.id));
         setProjects(items); setProjectId(items[0]?.id || null);
       } catch (cause) { setError(message(cause)); }
     }
@@ -216,9 +222,9 @@ function MainApp() {
         onOpenCreateProject={() => setCreateProjectOpen(true)} onDeleteProject={() => void deleteProject()}
         applications={currentApplications} activeLogMood={catMood} catBreed={catBreed} onPetCat={handlePet}
         onOpenCatCustomizer={() => setCustomizerOpen(true)} unreadNotificationCount={unread} onOpenNotifications={() => setNotificationsOpen(true)} />
-      {(error || notice || !window.simplyLogs) && (
-        <div role={error ? 'alert' : 'status'} className={`px-4 py-2 text-xs flex justify-between gap-3 ${error ? 'bg-rose-500/10 text-rose-600 dark:text-rose-300' : 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'}`}>
-          <span>{error || notice || 'UI preview only. Run npm run dev or install Simply Logs to connect applications.'}</span>
+      {(error || historyError || notice || !window.simplyLogs) && (
+        <div role={error || historyError ? 'alert' : 'status'} className={`px-4 py-2 text-xs flex justify-between gap-3 ${error || historyError ? 'bg-rose-500/10 text-rose-600 dark:text-rose-300' : 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'}`}>
+          <span>{error || historyError || notice || 'UI preview only. Run npm run dev or install Simply Logs to connect applications.'}</span>
           {(error || notice) && <button aria-label="Dismiss message" onClick={() => { setError(null); setNotice(null); }}><X className="w-3.5 h-3.5" /></button>}
         </div>
       )}

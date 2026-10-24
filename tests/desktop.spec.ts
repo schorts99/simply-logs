@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { application } from './fixtures';
 
 test('desktop onboarding, real-data boundaries, filtering, pause and shared mute', async ({}, info) => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-desktop-'));
@@ -12,6 +13,7 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     ],
     env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
   });
+
   try {
     await app.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler('monitor:probe');
@@ -41,8 +43,23 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
       ipcMain.removeHandler('providers:runtime-deployment');
       ipcMain.handle('providers:runtime-deployment', () => 'deploy-fixture');
       ipcMain.removeHandler('providers:runtime-start');
-      const runtimeState = { started: [] as string[], stopped: [] as string[] };
+      const runtimeState = { started: [] as string[], stopped: [] as string[], historyStarted: [] as string[] };
       (globalThis as any).__runtimeTest = runtimeState;
+      ipcMain.removeHandler('providers:runtime-history');
+      ipcMain.handle('providers:runtime-history', (_event, input) => {
+        runtimeState.historyStarted.push(input.subscriptionId);
+        return { events: [{
+          id: 'past-runtime-fixture', deploymentId: 'previous-deployment', timestamp: Date.now() - 30 * 60 * 1000,
+          level: 'warn', source: 'serverless', message: 'Runtime output from thirty minutes ago',
+          method: 'POST', path: '/api/history', statusCode: 429, messageTruncated: false,
+          logs: [{ level: 'warning', message: 'Runtime output from thirty minutes ago', messageTruncated: false }],
+        }, {
+          id: 'runtime-fixture', deploymentId: 'deploy-fixture', timestamp: Date.now() - 1000,
+          level: 'error', source: 'serverless', message: 'Actual provider runtime output fixture',
+          method: 'POST', path: '/api/test', statusCode: 500, messageTruncated: false,
+          logs: [{ level: 'error', message: 'Actual provider runtime output fixture', messageTruncated: false }],
+        }], truncated: false };
+      });
       ipcMain.handle('providers:runtime-start', (event, input) => {
         runtimeState.started.push(input.subscriptionId);
         event.sender.send('providers:runtime-update', {
@@ -116,12 +133,16 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await page.getByRole('button', { name: 'Add application', exact: true }).click();
     await expect(page.getByText('Actual provider build event fixture')).toBeVisible();
     await expect(page.getByText('Actual provider runtime output fixture')).toBeVisible();
+    await expect(page.getByText('Runtime output from thirty minutes ago', { exact: true })).toBeVisible();
+    await expect(page.getByText('Actual provider runtime output fixture', { exact: true })).toHaveCount(1);
+    expect(await app.evaluate(() => (globalThis as any).__runtimeTest.historyStarted.length)).toBe(1);
     await page.getByRole('button', { name: 'serverless', exact: true }).click();
     await expect(page.getByText('Actual provider runtime output fixture')).toBeVisible();
     await expect(page.getByText('Actual provider build event fixture')).toHaveCount(0);
     await page.getByRole('button', { name: 'build', exact: true }).click();
     await expect(page.getByText('Actual provider build event fixture')).toBeVisible();
     await expect(page.getByText('Actual provider runtime output fixture')).toHaveCount(0);
+    await expect(page.getByText('Runtime output from thirty minutes ago', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'serverless', exact: true }).click();
     const firstRuntimeSubscription = await app.evaluate(() => (globalThis as any).__runtimeTest.started[0] as string);
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
@@ -154,6 +175,79 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await expect(workspace.getByText(/^GET https:\/\//)).toHaveCount(0);
     await page.screenshot({ path: info.outputPath('desktop.png') });
     expect(errors).toEqual([]);
+  } finally {
+    await app.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('received runtime and build history survives quitting, reopening and clearing', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-history-'));
+  const launch = () => electron.launch({
+    args: [
+      '.', `--user-data-dir=${profile}`, '--disable-gpu',
+      ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
+    env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+  });
+  let app = await launch();
+  try {
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('providers:runtime-history');
+      ipcMain.handle('providers:runtime-history', () => ({ events: [], truncated: false }));
+      ipcMain.removeHandler('providers:deployments');
+      ipcMain.handle('providers:deployments', () => [{ id: 'history-deployment', state: 'ready', createdAt: Date.now() }]);
+      ipcMain.removeHandler('providers:events');
+      ipcMain.handle('providers:events', () => [{
+        id: 'history-build', timestamp: Date.now(), level: 'info', message: 'Build output retained after quitting',
+      }]);
+      ipcMain.removeHandler('providers:runtime-deployment');
+      ipcMain.handle('providers:runtime-deployment', () => 'history-deployment');
+      ipcMain.removeHandler('providers:runtime-start');
+      ipcMain.handle('providers:runtime-start', (event, input) => {
+        event.sender.send('providers:runtime-update', {
+          subscriptionId: input.subscriptionId,
+          event: {
+            id: 'history-runtime', timestamp: Date.now(), level: 'info', source: 'serverless',
+            message: 'Runtime output retained after quitting', method: 'POST', path: '/api/history',
+            statusCode: 200, messageTruncated: false,
+          },
+        });
+      });
+    });
+    let page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Create your first project' })).toBeVisible();
+    await page.evaluate(savedApp => {
+      localStorage.setItem('simply_logs_projects_v1', JSON.stringify([{
+        id: savedApp.projectId, name: 'History project', description: '', color: '#6366f1', tags: [], createdAt: 1000,
+      }]));
+      localStorage.setItem('simply_logs_apps_v1', JSON.stringify([savedApp]));
+    }, application({
+      deploymentUrl: undefined,
+      config: { connectionMode: 'account', credentialId: 'missing-test-credential', vercelProjectId: 'history-project' },
+    }));
+    await page.reload();
+    await expect(page.getByText('Runtime output retained after quitting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Build output retained after quitting', { exact: true })).toBeVisible();
+    await app.close();
+
+    // A new process has no mocked provider history or runtime stream to replay.
+    app = await launch();
+    page = await app.firstWindow();
+    await expect(page.getByText('Runtime output retained after quitting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Build output retained after quitting', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'serverless', exact: true }).click();
+    await expect(page.getByText('Runtime output retained after quitting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Build output retained after quitting', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    await app.close();
+
+    app = await launch();
+    page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Add App', exact: true })).toBeVisible();
+    await expect(page.getByText('Runtime output retained after quitting', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Build output retained after quitting', { exact: true })).toHaveCount(0);
   } finally {
     await app.close();
     await rm(profile, { recursive: true, force: true });

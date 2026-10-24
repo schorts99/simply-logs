@@ -28,6 +28,7 @@ export function desktop(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     deployments: async () => [],
     events: async () => [],
     runtimeDeployment: async () => null,
+    loadRuntimeHistory: (_input, onHistory) => { queueMicrotask(() => onHistory({ events: [], truncated: false })); return () => {}; },
     subscribeRuntimeLogs: () => () => {},
     probe: async () => ({
       success: true, statusCode: 200, latencyMs: 20, region: 'iad1', server: 'Vercel',

@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
-import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provider, ProviderTarget, RuntimeEvent } from '../shared/desktop';
+import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provider, ProviderTarget, RuntimeEvent, RuntimeHistory, RuntimeHistoryEvent, RuntimeLogMessage } from '../shared/desktop';
 import { publicRequest, validatePublicUrl, type NetworkResponse } from './network';
 
 type Request = typeof publicRequest;
@@ -174,6 +174,83 @@ export function runtimeEvent(value: unknown): RuntimeEvent | null {
       entry.responseStatusCode >= 100 && entry.responseStatusCode <= 599 ? entry.responseStatusCode : undefined,
     messageTruncated: entry.messageTruncated === true,
   };
+}
+
+export function runtimeHistoryEvent(value: unknown): RuntimeHistoryEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.requestId !== 'string' || !row.requestId ||
+      typeof row.deploymentId !== 'string' || !row.deploymentId ||
+      (typeof row.timestamp !== 'string' && typeof row.timestamp !== 'number')) return null;
+  const timestamp = typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp);
+  if (!Number.isFinite(timestamp)) return null;
+  const logs: RuntimeLogMessage[] = Array.isArray(row.logs) ? row.logs.flatMap(log => {
+    if (!log || typeof log.message !== 'string' || !log.message.trim()) return [];
+    return [{
+      level: typeof log.level === 'string' ? log.level : 'info',
+      message: log.message, messageTruncated: log.messageTruncated === true,
+    }];
+  }) : [];
+  const severity = (level: string) => ['error', 'fatal'].includes(level) ? 3
+    : ['warn', 'warning'].includes(level) ? 2 : ['debug', 'trace'].includes(level) ? 0 : 1;
+  const level = logs.reduce((selected, log) => severity(log.level) > severity(selected) ? log.level : selected, logs[0]?.level ?? 'info');
+  const source = Array.isArray(row.events) ? row.events.find(event => event && typeof event.source === 'string')?.source : undefined;
+  const event = runtimeEvent({
+    rowId: row.requestId, timestampInMs: timestamp, level,
+    source: ['serverless', 'edge-function', 'edge-middleware'].includes(source) ? source : 'request',
+    message: logs.map(log => log.message).join('\n'),
+    requestMethod: row.requestMethod, requestPath: row.requestPath,
+    responseStatusCode: row.statusCode, domain: row.domain,
+    messageTruncated: logs.some(log => log.messageTruncated),
+  });
+  return event ? { ...event, deploymentId: row.deploymentId, logs } : null;
+}
+
+export async function runtimeHistory(
+  target: ProviderTarget, token: string, signal: AbortSignal,
+  send: Request = publicRequest, now = Date.now(),
+): Promise<RuntimeHistory> {
+  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
+  deadline.throwIfAborted();
+  const projectUrl = providerUrl('vercel', `/v9/projects/${encodeURIComponent(target.targetId)}`, target.teamId);
+  const project = JSON.parse((await providerRequest(projectUrl, token, send, { signal: deadline })).body);
+  const ownerId = project?.accountId || target.teamId;
+  if (typeof project?.id !== 'string' || !project.id || typeof ownerId !== 'string' || !ownerId) {
+    throw new Error('The provider returned an unexpected project owner for runtime history.');
+  }
+  const start = now - 60 * 60 * 1000;
+  const entries = new Map<string, RuntimeHistoryEvent>();
+  let hasMore = false;
+  for (let page = 0; page < 100; page++) {
+    deadline.throwIfAborted();
+    // This is the historical query endpoint used by Vercel's CLI, not the live REST stream.
+    const url = new URL('https://vercel.com/api/logs/request-logs');
+    if (target.teamId) url.searchParams.set('teamId', target.teamId);
+    else if (ownerId.startsWith('team_')) url.searchParams.set('teamId', ownerId);
+    url.searchParams.set('projectId', project.id);
+    url.searchParams.set('ownerId', ownerId);
+    url.searchParams.set('environment', target.environment || 'production');
+    url.searchParams.set('startDate', String(start));
+    url.searchParams.set('endDate', String(now));
+    url.searchParams.set('page', String(page));
+    const data = JSON.parse((await providerRequest(url, token, send, { signal: deadline })).body);
+    if (!Array.isArray(data?.rows) || (data.hasMoreRows !== undefined && typeof data.hasMoreRows !== 'boolean')) {
+      throw new Error('The provider returned an unexpected runtime history response.');
+    }
+    hasMore = data.hasMoreRows === true;
+    for (const row of data.rows) {
+      if (row?.environment && row.environment !== (target.environment || 'production')) continue;
+      const event = runtimeHistoryEvent(row);
+      if (event && event.timestamp >= start && event.timestamp <= now) entries.set(`${event.deploymentId}:${event.id}`, event);
+    }
+    if (!hasMore || entries.size >= 1000) break;
+    if (data.rows.length === 0) throw new Error('The provider returned an empty runtime history page with more results pending.');
+  }
+  deadline.throwIfAborted();
+  const events = [...entries.values()].sort((a, b) => b.timestamp - a.timestamp);
+  return { events: events.slice(0, 1000).reverse(), truncated: hasMore || events.length > 1000 };
 }
 
 export async function streamRuntimeLogs(

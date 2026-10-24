@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile } from 'node:fs/promises';
 import type { Provider, ProviderTarget } from '../shared/desktop';
 import { CredentialStore } from './credentials';
-import { discover, deployments, events, probe, runtimeDeployment, streamRuntimeLogs } from './monitoring';
+import { discover, deployments, events, probe, runtimeDeployment, runtimeHistory, streamRuntimeLogs } from './monitoring';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const developmentUrl = !app.isPackaged ? process.env.SIMPLY_LOGS_DEV_URL : undefined;
@@ -17,10 +17,13 @@ app.setAppUserModelId('app.simplylogs.desktop');
 let window: BrowserWindow | null = null;
 const notifications = new Set<Notification>();
 const runtimeStreams = new Map<string, AbortController>();
+const runtimeHistoryRequests = new Map<string, AbortController>();
 
 function stopRuntimeStreams(): void {
   runtimeStreams.forEach(controller => controller.abort());
   runtimeStreams.clear();
+  runtimeHistoryRequests.forEach(controller => controller.abort());
+  runtimeHistoryRequests.clear();
 }
 
 function text(value: unknown, max = 1024): string {
@@ -145,6 +148,21 @@ else {
       const selected = target(input);
       return runtimeDeployment(selected, await credentials.get(selected.credentialId));
     });
+    handle('providers:runtime-history', async input => {
+      const selected = target(input);
+      const subscriptionId = text(input.subscriptionId, 256);
+      if (runtimeHistoryRequests.has(subscriptionId)) throw new Error('Runtime history request already exists.');
+      if (runtimeHistoryRequests.size >= 100) throw new Error('Too many runtime history requests.');
+      const controller = new AbortController();
+      runtimeHistoryRequests.set(subscriptionId, controller);
+      try {
+        const token = await credentials.get(selected.credentialId);
+        return await runtimeHistory(selected, token, controller.signal);
+      } finally {
+        controller.abort();
+        if (runtimeHistoryRequests.get(subscriptionId) === controller) runtimeHistoryRequests.delete(subscriptionId);
+      }
+    });
     handle('providers:runtime-start', input => {
       const selected = target(input);
       const deploymentId = text(input.deploymentId, 256);
@@ -174,6 +192,8 @@ else {
       const subscriptionId = text(id, 256);
       runtimeStreams.get(subscriptionId)?.abort();
       runtimeStreams.delete(subscriptionId);
+      runtimeHistoryRequests.get(subscriptionId)?.abort();
+      runtimeHistoryRequests.delete(subscriptionId);
     });
     handle('monitor:probe', url => probe(text(url, 2048)));
     handle('credentials:save', (id, token) => credentials.save(text(id, 256), text(token, 4096)));

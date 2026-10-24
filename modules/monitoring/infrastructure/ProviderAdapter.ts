@@ -126,6 +126,9 @@ export class ProviderAdapter implements IProviderAdapter {
     let runtimeStop: (() => void) | undefined;
     let runtimeDeploymentId: string | null = null;
     let runtimeGeneration = 0;
+    let historyStop: (() => void) | undefined;
+    let historyLoading = false;
+    let historyLoaded = false;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const emit = (entry: LogEntry) => { if (active) onLog(entry); };
     const stopRuntime = () => {
@@ -137,7 +140,34 @@ export class ProviderAdapter implements IProviderAdapter {
       id: `${app.id}:runtime-unavailable:${message}`,
       source: 'runtime', level: 'warn', message,
     }));
+    const loadHistory = () => {
+      if (historyLoaded || historyLoading) return;
+      try {
+        historyLoading = true;
+        historyStop = this.desktop().loadRuntimeHistory(this.target(app), history => {
+          if (!active) return;
+          historyLoaded = true;
+          historyLoading = false;
+          for (const event of history.events) {
+            const { id, deploymentId, messageTruncated, logs, ...fields } = event;
+            emit(this.entry(app, {
+              ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`, requestId: id,
+              payload: { deploymentId, messageTruncated, historical: true, logs },
+            }));
+          }
+          if (history.truncated) runtimeWarning('Runtime history was limited to the latest 1,000 requests or the provider query limit. Some logs from the past hour may be missing.');
+        }, message => {
+          if (!active) return;
+          historyLoading = false;
+          runtimeWarning(`Runtime history unavailable: ${message} Retrying automatically. Live runtime logs connect independently.`);
+        });
+      } catch (error) {
+        historyLoading = false;
+        runtimeWarning(`Runtime history unavailable: ${error instanceof Error ? error.message : 'Unexpected error.'} Retrying automatically.`);
+      }
+    };
     const syncRuntime = async () => {
+      loadHistory();
       try {
         const target = this.target(app);
         const deploymentId = await this.desktop().runtimeDeployment(target);
@@ -194,6 +224,7 @@ export class ProviderAdapter implements IProviderAdapter {
     }
     return () => {
       active = false;
+      historyStop?.();
       stopRuntime();
       timers.forEach(clearTimeout);
       timers.clear();

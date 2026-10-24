@@ -45,6 +45,22 @@ export interface RuntimeEvent {
   messageTruncated: boolean;
 }
 
+export interface RuntimeLogMessage {
+  level: string;
+  message: string;
+  messageTruncated: boolean;
+}
+
+export interface RuntimeHistoryEvent extends RuntimeEvent {
+  deploymentId: string;
+  logs: RuntimeLogMessage[];
+}
+
+export interface RuntimeHistory {
+  events: RuntimeHistoryEvent[];
+  truncated: boolean;
+}
+
 export interface ProbeResult {
   success: boolean;
   statusCode: number;
@@ -63,6 +79,11 @@ export interface DesktopBridge {
   deployments(input: ProviderTarget): Promise<Deployment[]>;
   events(input: ProviderTarget & { deploymentId: string }): Promise<BuildEvent[]>;
   runtimeDeployment(input: ProviderTarget): Promise<string | null>;
+  loadRuntimeHistory(
+    input: ProviderTarget,
+    onHistory: (history: RuntimeHistory) => void,
+    onError: (message: string) => void,
+  ): () => void;
   subscribeRuntimeLogs(
     input: ProviderTarget & { deploymentId: string },
     onLog: (event: RuntimeEvent) => void,

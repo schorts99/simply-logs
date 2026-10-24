@@ -333,6 +333,7 @@ test('URL-only, Netlify and local development never open runtime streams', async
     let requests = 0;
     const adapter = new ProviderAdapter(app.providerType, () => desktop({
       runtimeDeployment: async () => { requests++; return 'deployment'; },
+      loadRuntimeHistory: () => { requests++; return () => {}; },
     }));
     const logs: LogEntry[] = [];
     const stop = adapter.subscribeLogs(app, log => logs.push(log));
