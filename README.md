@@ -4,6 +4,8 @@
 
 A local-first Electron app for Windows, Linux, and macOS. Follow deployment activity, inspect build logs, and check public application health with a small cat companion. The operating system provides real window controls; there is no window-style preview switch.
 
+On Windows, the File/Edit/View menu bar is hidden, including when pressing Alt; its keyboard shortcuts remain available. macOS and Linux keep their native menus.
+
 ## Run locally
 
 Use Node.js 26.x and npm. The included `.nvmrc` selects Node 26 for nvm users. No environment file, hosted backend, or provider token is required for URL-only monitoring. Installed apps use Electron's bundled runtime; end users do not need Node.js.

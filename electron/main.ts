@@ -73,6 +73,7 @@ async function createWindow(): Promise<void> {
       webSecurity: true,
     },
   });
+  if (process.platform === 'win32') window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window?.show());
   window.on('closed', () => { window = null; });
   window.webContents.on('will-navigate', event => event.preventDefault());

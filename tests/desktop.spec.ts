@@ -44,6 +44,11 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     await expect(page).toHaveTitle('Simply Logs');
+    if (process.platform !== 'darwin') {
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible()))
+        .toBe(process.platform !== 'win32');
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarAutoHide())).toBe(false);
+    }
     await expect(page.getByRole('heading', { name: 'Simply Logs', exact: true })).toBeVisible();
     await expect(page.getByTitle('Toggle window style (macOS / Windows)')).toHaveCount(0);
     expect(await page.evaluate(() => ({ require: typeof (window as any).require, process: typeof (window as any).process }))).toEqual({ require: 'undefined', process: 'undefined' });
