@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+dist-electron/
+public/icon.png
+release/
+playwright-report/
+test-results/
+coverage/
+.DS_Store
+*.log
+.env*
