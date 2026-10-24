@@ -38,19 +38,34 @@ test('runtime JSON lines survive split UTF-8, CRLF, blank lines, multiple record
   assert.deepEqual(values, [{ message: '\u{1f63a}' }, { id: 2 }, { id: 3 }]);
 });
 
-test('public transport delivers runtime lines before EOF and keeps idle streams cancellable', async context => {
+test('runtime streams tolerate over eight seconds of inactivity before headers and between logs, and remain cancellable', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
   const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
   const timeouts: number[] = [];
   const controller = new AbortController();
   const values: unknown[] = [];
   let requested!: () => void;
+  let deliverHeaders!: () => void;
+  let destroyed = false;
   const requestReady = new Promise<void>(resolve => { requested = resolve; });
   const fakeRequest = (_url: URL, options: https.RequestOptions, onResponse: (response: unknown) => void) => {
     assert.equal(options.signal, controller.signal);
     assert.equal(options.agent, false);
     const req = Object.assign(new EventEmitter(), {
       setTimeout: (milliseconds: number) => { timeouts.push(milliseconds); },
-      end: () => { onResponse(response); requested(); },
+      destroy: (error: Error) => {
+        destroyed = true;
+        response.destroy(error);
+        req.emit('error', error);
+        req.emit('close');
+      },
+      end: () => {
+        const socket = new EventEmitter();
+        req.emit('socket', socket);
+        socket.emit('secureConnect');
+        deliverHeaders = () => onResponse(response);
+        requested();
+      },
     });
     controller.signal.addEventListener('abort', () => {
       response.destroy(controller.signal.reason);
@@ -66,14 +81,67 @@ test('public transport delivers runtime lines before EOF and keeps idle streams 
   });
   const rejected = assert.rejects(pending, /abort/i);
   await requestReady;
+  context.mock.timers.tick(9000);
+  assert.equal(destroyed, false, 'a connected stream must not time out before its first headers');
+  assert.deepEqual(timeouts, [], 'no idle timeout is installed while waiting for streaming headers');
+  deliverHeaders();
   response.write('{"message":"live output"}\n');
   await tick();
   assert.deepEqual(values, [{ message: 'live output' }]);
-  assert.deepEqual(timeouts, [8000, 0], 'idle timeout is disabled only after successful streaming headers');
+  assert.deepEqual(timeouts, [0], 'successful runtime streams have no socket idle timeout');
+  context.mock.timers.tick(60000);
+  assert.equal(destroyed, false, 'a quiet stream must stay open between logs');
+  response.write('{"message":"later output"}\n');
+  await tick();
+  assert.equal(values.length, 2);
   assert.equal(response.readableEnded, false);
   controller.abort();
   await rejected;
   assert.equal(response.destroyed, true);
+});
+
+test('runtime TLS connections time out at eight seconds while ordinary requests retain their idle timeout', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const requests: { req: EventEmitter; timeouts: number[]; getError: () => Error | undefined }[] = [];
+  let requested!: () => void;
+  let requestReady = new Promise<void>(resolve => { requested = resolve; });
+  const fakeRequest = () => {
+    let error: Error | undefined;
+    const timeouts: number[] = [];
+    const req = Object.assign(new EventEmitter(), {
+      setTimeout: (milliseconds: number, onTimeout: () => void) => {
+        timeouts.push(milliseconds);
+        req.once('timeout', onTimeout);
+      },
+      end: () => { req.emit('socket', new EventEmitter()); requested(); },
+      destroy: (cause: Error) => {
+        error = cause;
+        req.emit('error', cause);
+        req.emit('close');
+      },
+    });
+    requests.push({ req, timeouts, getError: () => error });
+    return req;
+  };
+  context.mock.method(https, 'request', fakeRequest as unknown as typeof https.request);
+  syncBuiltinESMExports();
+  context.after(() => { context.mock.restoreAll(); syncBuiltinESMExports(); });
+  const signal = new AbortController().signal;
+  const connecting = publicRequest('https://1.1.1.1', { signal, onJsonLine: () => {} });
+  const rejected = assert.rejects(connecting, /Connection timed out after 8 seconds/);
+  await requestReady;
+  context.mock.timers.tick(7999);
+  assert.equal(requests[0].getError(), undefined);
+  context.mock.timers.tick(1);
+  await rejected;
+  assert.deepEqual(requests[0].timeouts, []);
+  requestReady = new Promise<void>(resolve => { requested = resolve; });
+  const ordinary = publicRequest('https://1.1.1.1', { signal });
+  const ordinaryRejected = assert.rejects(ordinary, /Request timed out after 8 seconds/);
+  await requestReady;
+  assert.deepEqual(requests[1].timeouts, [8000]);
+  requests[1].req.emit('timeout');
+  await ordinaryRejected;
 });
 
 test('runtime streaming bounds each line, not total stream size, and rejects corrupt JSON', async () => {

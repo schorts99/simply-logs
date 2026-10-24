@@ -85,6 +85,7 @@ export async function publicRequest(
   );
 
   const result = await new Promise<NetworkResponse>((resolve, reject) => {
+    let connectionTimeout: ReturnType<typeof setTimeout> | undefined;
     const req = request(url, {
       method: 'GET',
       headers: { 'User-Agent': 'Simply-Logs/1.0', ...options.headers },
@@ -94,6 +95,7 @@ export async function publicRequest(
       family: address.family,
       agent: false,
     }, res => {
+      clearTimeout(connectionTimeout);
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(res.headers)) {
         if (value !== undefined) headers[key] = Array.isArray(value) ? value.join(', ') : value;
@@ -110,6 +112,9 @@ export async function publicRequest(
         void readJsonLines(res, options.onJsonLine).then(() => resolve(response), reject);
         return;
       }
+      if (options.onJsonLine) {
+        req.setTimeout(8000, () => req.destroy(new Error('Request timed out after 8 seconds.')));
+      }
       const chunks: Buffer[] = [];
       let bytes = 0;
       res.on('data', (chunk: Buffer) => {
@@ -123,8 +128,15 @@ export async function publicRequest(
       res.once('error', reject);
       res.once('end', () => resolve({ ...response, body: Buffer.concat(chunks).toString('utf8') }));
     });
-    req.once('error', reject);
-    req.setTimeout(8000, () => req.destroy(new Error('Request timed out after 8 seconds.')));
+    req.once('error', error => { clearTimeout(connectionTimeout); reject(error); });
+    req.once('close', () => clearTimeout(connectionTimeout));
+    if (options.onJsonLine) {
+      connectionTimeout = setTimeout(() => req.destroy(new Error('Connection timed out after 8 seconds.')), 8000);
+      // A quiet runtime stream may not send headers until its first log event.
+      req.once('socket', socket => socket.once('secureConnect', () => clearTimeout(connectionTimeout)));
+    } else {
+      req.setTimeout(8000, () => req.destroy(new Error('Request timed out after 8 seconds.')));
+    }
     req.end();
   });
 

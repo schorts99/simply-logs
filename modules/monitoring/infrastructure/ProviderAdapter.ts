@@ -171,7 +171,7 @@ export class ProviderAdapter implements IProviderAdapter {
           payload: { deploymentId },
         }));
       } catch (error) {
-        runtimeWarning(`Runtime log access unavailable: ${error instanceof Error ? error.message : 'Unexpected error.'} Retrying automatically.`);
+        runtimeWarning(`Runtime deployment selection failed: ${error instanceof Error ? error.message : 'Unexpected error.'} Retrying automatically.`);
       }
     };
     const schedule = (action: () => Promise<void>, delay: number) => {
