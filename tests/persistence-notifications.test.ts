@@ -47,6 +47,69 @@ test('legacy tokens are moved out of browser storage before they are saved in th
   assert.equal(values.has('purrpulse_infra_apps_v2'), false);
 });
 
+test('deleting applications keeps a shared token across projects until its last reference is removed', async () => {
+  storage();
+  const deleted: string[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    simplyLogs: desktop({ deleteCredential: async id => { deleted.push(id); } }),
+  } });
+  const repository = new LocalStorageProjectRepository();
+  for (const [id, projectId, credentialId] of [
+    ['first', 'project-one', 'shared-token'],
+    ['second', 'project-two', 'shared-token'],
+    ['third', 'project-one', 'separate-token'],
+  ]) {
+    await repository.saveApplication(application({ id, projectId, config: { connectionMode: 'account', credentialId } }));
+  }
+  await repository.deleteApplication('first');
+  assert.deepEqual(deleted, []);
+  assert.equal((await repository.getApplications('project-two'))[0].config.credentialId, 'shared-token');
+  await repository.deleteApplication('third');
+  assert.deepEqual(deleted, ['separate-token']);
+  await repository.deleteApplication('second');
+  assert.deepEqual(deleted, ['separate-token', 'shared-token']);
+});
+
+test('deleting a project preserves tokens used elsewhere and deletes each unused token only once', async () => {
+  const project = { name: 'Project', description: '', color: '#6366f1', tags: [], createdAt: 1000 };
+  storage({
+    simply_logs_projects_v1: JSON.stringify([{ ...project, id: 'project-one' }, { ...project, id: 'project-two' }]),
+    simply_logs_apps_v1: JSON.stringify([
+      application({ id: 'first', config: { connectionMode: 'account', credentialId: 'shared-token' } }),
+      application({ id: 'second', projectId: 'project-two', config: { connectionMode: 'account', credentialId: 'shared-token' } }),
+      application({ id: 'third', config: { connectionMode: 'account', credentialId: 'project-only-token' } }),
+      application({ id: 'fourth', config: { connectionMode: 'account', credentialId: 'project-only-token' } }),
+    ]),
+  });
+  const deleted: string[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    simplyLogs: desktop({ deleteCredential: async id => { deleted.push(id); } }),
+  } });
+  const repository = new LocalStorageProjectRepository();
+  await repository.deleteProject('project-one');
+  assert.deepEqual(deleted, ['project-only-token']);
+  assert.deepEqual((await repository.getApplications()).map(app => app.id), ['second']);
+  assert.deepEqual((await repository.getProjects()).map(item => item.id), ['project-two']);
+  await repository.deleteProject('project-two');
+  assert.deepEqual(deleted, ['project-only-token', 'shared-token']);
+});
+
+test('failed application storage never deletes a credential still referenced by saved data', async () => {
+  storage({ simply_logs_apps_v1: JSON.stringify([
+    application({ config: { connectionMode: 'account', credentialId: 'saved-token' } }),
+  ]) });
+  const deleted: string[] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    simplyLogs: desktop({ deleteCredential: async id => { deleted.push(id); } }),
+  } });
+  localStorage.setItem = () => { throw new Error('Storage full'); };
+  const repository = new LocalStorageProjectRepository();
+  await assert.rejects(repository.deleteApplication('app-one'), /could not be saved/);
+  await assert.rejects(repository.deleteProject('project-one'), /could not be saved/);
+  assert.deepEqual(deleted, []);
+  assert.equal((await repository.getApplications())[0].config.credentialId, 'saved-token');
+});
+
 test('historical sample apps are removed rather than monitored', async () => {
   storage({ purrpulse_infra_apps_v2: JSON.stringify([application({ id: 'app_vercel_storefront' })]) });
   assert.deepEqual(await new LocalStorageProjectRepository().getApplications(), []);

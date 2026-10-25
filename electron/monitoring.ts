@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
 import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provider, ProviderTarget, RuntimeEvent, RuntimeHistory, RuntimeHistoryEvent, RuntimeLogMessage } from '../shared/desktop';
-import { publicRequest, validatePublicUrl, type NetworkResponse } from './network';
-
-type Request = typeof publicRequest;
+import { publicRequest, publicWebSocket, validatePublicUrl } from './network';
+import { providerUrl, providerRequest, type Request } from './provider-request';
+import { netlifyRuntimeDeployment, netlifyRuntimeHistory, streamNetlifyRuntimeLogs } from './netlify-runtime';
 
 export function probeMetadata(headers: Record<string, string>) {
   const cache = headers['x-vercel-cache'];
@@ -40,28 +40,6 @@ export async function probe(url: string, send: Request = publicRequest): Promise
       error: error instanceof Error ? error.message : 'Connection failed.',
     };
   }
-}
-
-function providerUrl(provider: Provider, path: string, teamId?: string): URL {
-  const url = new URL(path, provider === 'vercel' ? 'https://api.vercel.com' : 'https://api.netlify.com');
-  if (provider === 'vercel' && teamId) url.searchParams.set('teamId', teamId);
-  return url;
-}
-
-async function providerRequest(
-  url: URL, token: string, send: Request,
-  options: { signal?: AbortSignal; onJsonLine?: (value: unknown) => void } = {},
-): Promise<NetworkResponse> {
-  if (!token.trim()) throw new Error('A provider token is required. Connect this application again.');
-  const response = await send(url.href, {
-    headers: { Authorization: `Bearer ${token}`, Accept: options.onJsonLine ? 'application/stream+json' : 'application/json' },
-    signal: options.signal ?? AbortSignal.timeout(15000),
-    onJsonLine: options.onJsonLine,
-  });
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Provider returned HTTP ${response.status}. ${response.status === 401 || response.status === 403 ? 'Check your token and account permissions.' : 'Try again later.'}`);
-  }
-  return response;
 }
 
 export async function discover(
@@ -122,7 +100,7 @@ export async function deployments(target: ProviderTarget, token: string, send: R
 export async function runtimeDeployment(
   target: ProviderTarget, token: string, send: Request = publicRequest,
 ): Promise<string | null> {
-  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  if (target.provider === 'netlify') return netlifyRuntimeDeployment(target, token, send);
   if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
   if (target.environment !== 'preview') {
     const url = providerUrl('vercel', `/v9/projects/${encodeURIComponent(target.targetId)}`, target.teamId);
@@ -210,7 +188,7 @@ export async function runtimeHistory(
   target: ProviderTarget, token: string, signal: AbortSignal,
   send: Request = publicRequest, now = Date.now(),
 ): Promise<RuntimeHistory> {
-  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  if (target.provider === 'netlify') return netlifyRuntimeHistory(target, token, signal, send, now);
   if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
   deadline.throwIfAborted();
@@ -255,9 +233,9 @@ export async function runtimeHistory(
 
 export async function streamRuntimeLogs(
   target: ProviderTarget & { deploymentId: string }, token: string,
-  onLog: (event: RuntimeEvent) => void, signal: AbortSignal, send: Request = publicRequest,
+  onLog: (event: RuntimeEvent) => void, signal: AbortSignal, send: Request = publicRequest, openSocket = publicWebSocket,
 ): Promise<void> {
-  if (target.provider !== 'vercel') throw new Error('Runtime logs are currently supported only for Vercel.');
+  if (target.provider === 'netlify') return streamNetlifyRuntimeLogs(target, token, onLog, signal, send, openSocket);
   signal.throwIfAborted();
   const url = providerUrl('vercel',
     `/v1/projects/${encodeURIComponent(target.targetId)}/deployments/${encodeURIComponent(target.deploymentId)}/runtime-logs`,

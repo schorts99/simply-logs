@@ -53,11 +53,14 @@ export class LocalStorageProjectRepository implements IProjectRepository {
     const apps = await this.getApplications();
     const projects = await this.getProjects();
     const removed = apps.filter(app => app.projectId === projectId);
+    const remaining = apps.filter(app => app.projectId !== projectId);
     // Save applications first: an interrupted deletion leaves a recoverable empty project.
-    write(APPS, apps.filter(app => app.projectId !== projectId));
+    write(APPS, remaining);
     write(PROJECTS, projects.filter(project => project.id !== projectId));
-    for (const app of removed) {
-      if (app.config.credentialId) await getDesktop().deleteCredential(app.config.credentialId);
+    for (const credentialId of new Set(removed.map(app => app.config.credentialId))) {
+      if (credentialId && !remaining.some(app => app.config.credentialId === credentialId)) {
+        await getDesktop().deleteCredential(credentialId);
+      }
     }
   }
 
@@ -108,8 +111,12 @@ export class LocalStorageProjectRepository implements IProjectRepository {
   async deleteApplication(applicationId: string): Promise<void> {
     const apps = await this.getApplications();
     const removed = apps.find(app => app.id === applicationId);
-    write(APPS, apps.filter(app => app.id !== applicationId));
-    if (removed?.config.credentialId) await getDesktop().deleteCredential(removed.config.credentialId);
+    const remaining = apps.filter(app => app.id !== applicationId);
+    write(APPS, remaining);
+    const credentialId = removed?.config.credentialId;
+    if (credentialId && !remaining.some(app => app.config.credentialId === credentialId)) {
+      await getDesktop().deleteCredential(credentialId);
+    }
   }
 
 }

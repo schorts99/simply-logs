@@ -3,6 +3,7 @@ import type { Application, Environment, ProviderType } from '../domain/Project';
 import type { DiscoveredApplication } from '../../../shared/desktop';
 import { providerRegistry } from '../../monitoring/infrastructure/ProviderRegistry';
 import { getDesktop } from '../../desktop/infrastructure/DesktopBridge';
+import { projectRepository } from '../infrastructure/LocalStorageProjectRepository';
 import { useDialog } from '../../desktop/application/useDialog';
 import { X, CheckCircle, AlertCircle, Loader2, ExternalLink, RefreshCw } from 'lucide-react';
 
@@ -22,6 +23,10 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
   const [url, setUrl] = useState(application?.deploymentUrl || '');
   const [environment, setEnvironment] = useState<Environment>(application?.environment || 'production');
   const [token, setToken] = useState('');
+  const [credentialId, setCredentialId] = useState(application?.config.credentialId || '');
+  const [savedApplications, setSavedApplications] = useState<Application[]>([]);
+  const [loadingCredentials, setLoadingCredentials] = useState(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
   const [teamId, setTeamId] = useState(application?.config.vercelTeamId || '');
   const [targetId, setTargetId] = useState(application?.config.vercelProjectId || application?.config.netlifySiteId || '');
   const [framework, setFramework] = useState(application?.config.framework || '');
@@ -33,13 +38,34 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
   useDialog(true, () => { if (busy !== 'save') onClose(); });
   useEffect(() => () => { generation.current++; }, []);
   useEffect(() => { setProbeResult(null); }, [url]);
+  useEffect(() => {
+    if (mode !== 'account') return;
+    let canceled = false;
+    setLoadingCredentials(true); setCredentialError(null);
+    projectRepository.getApplications().then(apps => {
+      if (!canceled) setSavedApplications(apps);
+    }).catch(cause => {
+      if (!canceled) setCredentialError(cause instanceof Error ? cause.message : 'Saved tokens could not be loaded.');
+    }).finally(() => { if (!canceled) setLoadingCredentials(false); });
+    return () => { canceled = true; };
+  }, [mode]);
+
+  const savedCredentials = new Map<string, string>();
+  for (const app of application ? [application, ...savedApplications] : savedApplications) {
+    if (app.providerType === provider && app.config.connectionMode === 'account' && app.config.credentialId &&
+        !savedCredentials.has(app.config.credentialId)) {
+      savedCredentials.set(app.config.credentialId, app.name);
+    }
+  }
 
   const run = async (kind: 'discover' | 'probe') => {
     const version = generation.current;
     setBusy(kind); setError(null);
     try {
       if (kind === 'discover') {
-        const result = await providerRegistry.getAdapter(provider).validateCredentials({ apiToken: token, vercelTeamId: teamId });
+        const result = await providerRegistry.getAdapter(provider).validateCredentials({
+          apiToken: credentialId ? undefined : token, credentialId: credentialId || undefined, vercelTeamId: teamId,
+        });
         if (version !== generation.current) return;
         if (!result.valid) throw new Error(result.message || 'Could not connect.');
         setDiscovered(result.detectedApps || []);
@@ -56,7 +82,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null);
-    const savedCredential = application?.providerType === provider ? application.config.credentialId : undefined;
+    const savedCredential = credentialId || undefined;
     try {
       if (!name.trim()) throw new Error('Enter an application name.');
       if (mode === 'url' && !url.trim()) throw new Error('Enter the public URL to monitor.');
@@ -67,7 +93,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
         }
       }
       if (mode === 'account' && (!targetId.trim() || (!token.trim() && !savedCredential))) {
-        throw new Error('Enter your token and select an application, or provide its project/site ID.');
+        throw new Error('Enter or choose a saved token, then select an application or provide its project/site ID.');
       }
       setBusy('save');
       const app: Application = {
@@ -83,7 +109,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           vercelTeamId: provider === 'vercel' && mode === 'account' ? teamId.trim() || undefined : undefined,
         },
       };
-      await onAddApplication(app, mode === 'account' ? token.trim() || undefined : undefined);
+      await onAddApplication(app, mode === 'account' && !savedCredential ? token.trim() || undefined : undefined);
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save this application.');
@@ -108,7 +134,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           <fieldset disabled={Boolean(busy)} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs space-y-1 block">Platform
-                <select aria-label="Platform" value={provider} onChange={event => { setProvider(event.target.value as ProviderType); setToken(''); setTeamId(''); setTargetId(''); setDiscovered(null); setError(null); }} className={`${inputClass} mt-1`}>
+                <select aria-label="Platform" value={provider} onChange={event => { setProvider(event.target.value as ProviderType); setCredentialId(''); setToken(''); setTeamId(''); setTargetId(''); setDiscovered(null); setError(null); }} className={`${inputClass} mt-1`}>
                   <option value="vercel">Vercel</option><option value="netlify">Netlify</option>
                 </select>
               </label>
@@ -120,15 +146,27 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
             </div>
             {mode === 'account' && (
               <div className="rounded-xl p-3 space-y-3 bg-neutral-100 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800">
-                <div className="flex justify-between gap-2 text-xs">
-                  <label htmlFor="api-token">Personal access token{application?.config.credentialId && application.providerType === provider ? ' (leave blank to keep saved token)' : ''}</label>
-                  <a href={providerRegistry.getAdapter(provider).getMetadata().tokenGuideUrl} target="_blank" rel="noreferrer" className="text-indigo-500 flex gap-1 items-center shrink-0">Create token <ExternalLink className="w-3 h-3" /></a>
-                </div>
-                <input id="api-token" type="password" value={token} onChange={event => { setToken(event.target.value); setDiscovered(null); }} autoComplete="off" className={inputClass} />
+                <label className="text-xs block">Access token
+                  <select aria-label="Access token" value={credentialId} disabled={loadingCredentials}
+                    onChange={event => { setCredentialId(event.target.value); setToken(''); setTargetId(''); setDiscovered(null); setError(null); }}
+                    className={`${inputClass} mt-1`}>
+                    <option value="">Enter a new token</option>
+                    {[...savedCredentials].map(([id, appName]) => <option key={id} value={id}>Token from {appName}</option>)}
+                  </select>
+                </label>
+                {loadingCredentials && <p role="status" className="text-xs text-neutral-500">Loading saved tokens...</p>}
+                {credentialError && <p role="alert" className="text-xs text-rose-500">{credentialError} You can still enter a new token.</p>}
+                {!credentialId ? <>
+                  <div className="flex justify-between gap-2 text-xs">
+                    <label htmlFor="api-token">Personal access token</label>
+                    <a href={providerRegistry.getAdapter(provider).getMetadata().tokenGuideUrl} target="_blank" rel="noreferrer" className="text-indigo-500 flex gap-1 items-center shrink-0">Create token <ExternalLink className="w-3 h-3" /></a>
+                  </div>
+                  <input id="api-token" type="password" value={token} onChange={event => { setToken(event.target.value); setDiscovered(null); }} autoComplete="off" className={inputClass} />
+                </> : <p className="text-[11px] text-neutral-500">Reusing a saved token. Its value stays in the credential vault. Team and application settings remain independent.</p>}
                 {provider === 'vercel' && <label className="text-xs block">Team ID (optional)
                   <input aria-label="Team ID" value={teamId} onChange={event => { setTeamId(event.target.value); setTargetId(''); setDiscovered(null); }} className={`${inputClass} mt-1`} />
                 </label>}
-                <button type="button" disabled={!token.trim()} onClick={() => void run('discover')} className="flex items-center gap-2 text-xs text-indigo-500 font-medium">
+                <button type="button" disabled={loadingCredentials || (!token.trim() && !credentialId)} onClick={() => void run('discover')} className="flex items-center gap-2 text-xs text-indigo-500 font-medium">
                   <RefreshCw className="w-3.5 h-3.5" /> Discover applications
                 </button>
                 {discovered && <div className="max-h-36 overflow-y-auto space-y-1">
@@ -142,10 +180,10 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
                   <input aria-label={provider === 'vercel' ? 'Project ID' : 'Site ID'} value={targetId} onChange={event => setTargetId(event.target.value)} className={`${inputClass} mt-1`} placeholder="Select above or enter the provider ID" />
                 </label>
                 <p className="text-[11px] text-neutral-500">Tokens are never saved in browser storage. They use your OS keychain, or stay in memory when secure storage is unavailable.</p>
-                <p className="text-[11px] text-neutral-500">{provider === 'vercel' ? 'Includes deployment status, recent build logs and live runtime logs. Production follows the active deployment; preview follows the latest ready preview. Runtime logs require token access and are not available for local development.' : 'Includes deployment status. Netlify build logs must be viewed in its dashboard; runtime logs are not supported.'}</p>
+                <p className="text-[11px] text-neutral-500">{provider === 'vercel' ? 'Includes deployment status, recent build logs, past-hour runtime history and live runtime logs. Production follows the active deployment; preview follows the latest ready preview.' : 'Includes deployment status, past-hour Function/Edge Function history and live logs for the selected deployment. Production follows the published deploy; preview follows the latest ready deploy preview or branch deploy. Up to 10 Functions are monitored. Build logs stay in the Netlify dashboard.'} Runtime logs require token permissions and provider access; local development is not supported.</p>
               </div>
             )}
-            {mode === 'url' && <p className="text-[11px] text-neutral-500">URL-only monitoring checks health, not application logs. Connect a Vercel provider account for build and live runtime logs.</p>}
+            {mode === 'url' && <p className="text-[11px] text-neutral-500">URL-only monitoring checks health, not application logs. Connect a Vercel or Netlify account for runtime logs; Vercel also provides build logs.</p>}
             <label className="text-xs block" htmlFor="app-name">Application name
               <input data-autofocus id="app-name" required maxLength={100} value={name} onChange={event => setName(event.target.value)} className={`${inputClass} mt-1`} placeholder="e.g. My storefront" />
             </label>
@@ -168,7 +206,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           <div className="border-t border-neutral-200 dark:border-neutral-800 pt-4 flex justify-end items-center gap-3">
             {busy && <span role="status" className="text-xs text-neutral-500 mr-auto flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />{busy === 'save' ? 'Saving…' : 'Connecting…'}</span>}
             <button type="button" disabled={busy === 'save'} onClick={onClose} className="text-xs px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800">Cancel</button>
-            <button type="submit" disabled={Boolean(busy)} className="text-xs px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium">{application ? 'Save changes' : 'Add application'}</button>
+            <button type="submit" disabled={Boolean(busy) || (mode === 'account' && loadingCredentials)} className="text-xs px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium">{application ? 'Save changes' : 'Add application'}</button>
           </div>
         </form>
       </div>

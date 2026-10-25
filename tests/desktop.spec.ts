@@ -253,3 +253,286 @@ test('received runtime and build history survives quitting, reopening and cleari
     await rm(profile, { recursive: true, force: true });
   }
 });
+
+for (const provider of ['vercel', 'netlify'] as const) {
+  test(`${provider} tokens can be reused across projects, rediscovered, replaced and safely unlinked`, async () => {
+    const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-token-reuse-'));
+    const app = await electron.launch({
+      args: [
+        '.', `--user-data-dir=${profile}`, '--disable-gpu',
+        ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+      ],
+      env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+    });
+    try {
+      const page = await app.firstWindow();
+      const invalidDiscovery = await page.evaluate(async provider => {
+        const errors: string[] = [];
+        for (const input of [
+          { provider, apiToken: 'placeholder', credentialId: 'missing' },
+          { provider, credentialId: 'missing' },
+        ]) {
+          try { await window.simplyLogs!.discover(input as any); }
+          catch (error) { errors.push(String(error)); }
+        }
+        return errors;
+      }, provider);
+      expect(invalidDiscovery[0]).toContain('Choose either a saved token or a new token');
+      expect(invalidDiscovery[1]).toMatch(/No saved token|keychain is unavailable/);
+      await app.evaluate(({ ipcMain }) => {
+        const state = {
+          saved: [] as string[], deleted: [] as string[],
+          discoveries: [] as { provider: string; credentialId?: string; apiToken?: string; teamId?: string }[],
+        };
+        (globalThis as any).__tokenReuseTest = state;
+        ipcMain.removeHandler('credentials:save');
+        ipcMain.handle('credentials:save', (_event, id: string) => { state.saved.push(id); return { persistent: false }; });
+        ipcMain.removeHandler('credentials:delete');
+        ipcMain.handle('credentials:delete', (_event, id: string) => { state.deleted.push(id); });
+        ipcMain.removeHandler('providers:discover');
+        ipcMain.handle('providers:discover', (_event, input) => {
+          if (input.credentialId && (!state.saved.includes(input.credentialId) || state.deleted.includes(input.credentialId))) {
+            throw new Error('No saved token. Reconnect this application.');
+          }
+          state.discoveries.push(input);
+          return [
+            { name: 'First provider app', slug: 'first-app', projectId: 'project-first', siteId: 'site-first' },
+            { name: 'Second provider app', slug: 'second-app', projectId: 'project-second', siteId: 'site-second' },
+          ];
+        });
+        ipcMain.removeHandler('providers:deployments');
+        ipcMain.handle('providers:deployments', () => []);
+        ipcMain.removeHandler('providers:runtime-deployment');
+        ipcMain.handle('providers:runtime-deployment', () => null);
+        ipcMain.removeHandler('providers:runtime-history');
+        ipcMain.handle('providers:runtime-history', () => ({ events: [], truncated: false }));
+      });
+      await page.getByTitle('Mute all sounds').click();
+      await page.getByRole('button', { name: 'Create your first project' }).click();
+      await page.getByLabel('Project Name').fill('First project');
+      await page.getByRole('button', { name: 'Create project', exact: true }).click();
+      await page.getByRole('button', { name: 'Add your first application' }).click();
+      await page.getByLabel('Platform', { exact: true }).selectOption(provider);
+      await page.getByLabel('Connection', { exact: true }).selectOption('account');
+      await page.getByLabel('Personal access token', { exact: true }).fill('placeholder-reusable-token');
+      await page.getByRole('button', { name: 'Discover applications' }).click();
+      await page.getByRole('button', { name: 'First provider app', exact: true }).click();
+      await page.getByLabel('Application name').fill('First app');
+      await page.getByRole('button', { name: 'Add application', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Select First app', exact: true })).toBeVisible();
+      const credentialId = await app.evaluate(() => (globalThis as any).__tokenReuseTest.saved[0] as string);
+
+      await page.getByTitle('Create new project', { exact: true }).click();
+      await page.getByLabel('Project Name').fill('Second project');
+      await page.getByRole('button', { name: 'Create project', exact: true }).click();
+      await page.getByRole('button', { name: 'Add your first application' }).click();
+      await page.getByLabel('Platform', { exact: true }).selectOption(provider === 'vercel' ? 'netlify' : 'vercel');
+      await page.getByLabel('Connection', { exact: true }).selectOption('account');
+      const tokens = page.getByLabel('Access token', { exact: true });
+      await expect(tokens).toBeEnabled();
+      await expect(tokens.locator('option')).toHaveCount(1);
+      await page.getByLabel('Personal access token', { exact: true }).fill('placeholder-discarded-token');
+      await page.getByLabel('Platform', { exact: true }).selectOption(provider);
+      await expect(page.getByLabel('Personal access token', { exact: true })).toHaveValue('');
+      await expect(tokens.locator('option')).toHaveText(['Enter a new token', 'Token from First app']);
+      await tokens.selectOption(credentialId);
+      await expect(page.getByLabel('Personal access token', { exact: true })).toHaveCount(0);
+      if (provider === 'vercel') await page.getByLabel('Team ID', { exact: true }).fill('second-team');
+      await page.getByRole('button', { name: 'Discover applications' }).click();
+      await page.getByRole('button', { name: 'Second provider app', exact: true }).click();
+      await page.getByLabel('Application name').fill('Second app');
+      await page.getByRole('button', { name: 'Add application', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Select Second app', exact: true })).toBeVisible();
+      expect(await app.evaluate(() => (globalThis as any).__tokenReuseTest.saved.length)).toBe(1);
+      const discovery = await app.evaluate(() => (globalThis as any).__tokenReuseTest.discoveries[1]);
+      expect(discovery.credentialId).toBe(credentialId);
+      expect(discovery).not.toHaveProperty('apiToken');
+      if (provider === 'vercel') expect(discovery.teamId).toBe('second-team');
+      const savedApps = () => page.evaluate(() => JSON.parse(localStorage.getItem('simply_logs_apps_v1')!) as {
+        id: string; projectId: string; name: string; config: { credentialId: string };
+      }[]);
+      const linkedApps = await savedApps();
+      expect(linkedApps.map(item => item.config.credentialId)).toEqual([credentialId, credentialId]);
+      expect(linkedApps[0].projectId).not.toBe(linkedApps[1].projectId);
+      expect(await page.evaluate(() => Object.values(localStorage).join(''))).not.toContain('placeholder-reusable-token');
+
+      await page.getByTitle('Edit Second app').click();
+      await expect(tokens).toBeEnabled();
+      await expect(tokens).toHaveValue(credentialId);
+      await expect(tokens.locator('option')).toHaveCount(2);
+      await page.getByRole('button', { name: 'Discover applications' }).click();
+      await expect(page.getByRole('button', { name: 'Second provider app', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+      await page.getByRole('button', { name: 'Second project', exact: true }).click();
+      await page.getByRole('button', { name: 'First project', exact: true }).click();
+      await page.getByTitle('Edit First app').click();
+      await expect(tokens).toBeEnabled();
+      await tokens.selectOption('');
+      await page.getByLabel('Personal access token', { exact: true }).fill('placeholder-replacement-token');
+      await page.getByLabel(provider === 'vercel' ? 'Project ID' : 'Site ID', { exact: true }).fill('replacement-target');
+      await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      const replacementId = await app.evaluate(() => (globalThis as any).__tokenReuseTest.saved[1] as string);
+      expect(replacementId).not.toBe(credentialId);
+      expect(await app.evaluate(() => (globalThis as any).__tokenReuseTest.deleted)).toEqual([]);
+      expect((await savedApps()).find(item => item.name === 'Second app')!.config.credentialId).toBe(credentialId);
+
+      await page.getByTitle('Edit First app').click();
+      await expect(tokens).toBeEnabled();
+      await expect(tokens).toHaveValue(replacementId);
+      await expect(tokens.locator('option')).toHaveCount(3);
+      await tokens.selectOption(credentialId);
+      await page.getByLabel(provider === 'vercel' ? 'Project ID' : 'Site ID', { exact: true }).fill('original-target');
+      await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect(await app.evaluate(() => (globalThis as any).__tokenReuseTest.deleted)).toEqual([replacementId]);
+      expect(await app.evaluate(() => (globalThis as any).__tokenReuseTest.saved.length)).toBe(2);
+      await page.getByTitle('Delete application', { exact: true }).click();
+      await page.getByRole('button', { name: 'Delete', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Add your first application' })).toBeVisible();
+      expect(await app.evaluate(() => (globalThis as any).__tokenReuseTest.deleted)).toEqual([replacementId]);
+
+      await page.getByRole('button', { name: 'First project', exact: true }).click();
+      await page.getByRole('button', { name: 'Second project', exact: true }).click();
+      await page.getByRole('button', { name: 'Add App', exact: true }).click();
+      await page.getByLabel('Platform', { exact: true }).selectOption(provider);
+      await page.getByLabel('Connection', { exact: true }).selectOption('account');
+      await expect(tokens).toBeEnabled();
+      await expect(tokens.locator('option')).toHaveText(['Enter a new token', 'Token from Second app']);
+      await tokens.selectOption(credentialId);
+      await page.getByRole('button', { name: 'Discover applications' }).click();
+      await expect(page.getByRole('button', { name: 'Second provider app', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await page.getByRole('button', { name: 'Second project', exact: true }).click();
+      page.once('dialog', dialog => void dialog.accept());
+      await page.getByRole('button', { name: 'Delete current project', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'First project', exact: true })).toBeVisible();
+      await expect.poll(() => app.evaluate(() => (globalThis as any).__tokenReuseTest.deleted)).toEqual([replacementId, credentialId]);
+      expect(await savedApps()).toEqual([]);
+    } finally {
+      await app.close();
+      await rm(profile, { recursive: true, force: true });
+    }
+  });
+}
+
+test('Netlify onboarding loads Function/Edge history, streams live logs and restores them after restart', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-netlify-'));
+  const launch = () => electron.launch({
+    args: [
+      '.', `--user-data-dir=${profile}`, '--disable-gpu',
+      ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
+    env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+  });
+  let app = await launch();
+  try {
+    await app.evaluate(({ ipcMain }) => {
+      const state = { started: [] as string[], stopped: [] as string[], historyRequests: 0, buildRequests: 0 };
+      (globalThis as any).__netlifyTest = state;
+      ipcMain.removeHandler('credentials:save');
+      ipcMain.handle('credentials:save', () => ({ persistent: false }));
+      ipcMain.removeHandler('providers:discover');
+      ipcMain.handle('providers:discover', (_event, input) => {
+        if (input.provider !== 'netlify') throw new Error('Expected Netlify discovery.');
+        return [{ name: 'Netlify app', slug: 'netlify-app', siteId: 'netlify-site' }];
+      });
+      ipcMain.removeHandler('providers:deployments');
+      ipcMain.handle('providers:deployments', () => [{ id: 'netlify-published', state: 'ready', createdAt: Date.now() }]);
+      ipcMain.removeHandler('providers:events');
+      ipcMain.handle('providers:events', () => { state.buildRequests++; return []; });
+      ipcMain.removeHandler('providers:runtime-deployment');
+      ipcMain.handle('providers:runtime-deployment', (_event, input) => {
+        if (input.provider !== 'netlify' || input.environment !== 'production') throw new Error('Expected Netlify production.');
+        return 'netlify-published';
+      });
+      ipcMain.removeHandler('providers:runtime-history');
+      ipcMain.handle('providers:runtime-history', (_event, input) => {
+        if (input.provider !== 'netlify') throw new Error('Expected Netlify history.');
+        state.historyRequests++;
+        return { events: [{
+          id: 'netlify-function-history', deploymentId: 'netlify-published', timestamp: Date.now() - 30 * 60 * 1000,
+          source: 'serverless', level: 'warn', message: 'Past Netlify Function output', functionName: 'checkout',
+          requestId: 'netlify-request-one', messageTruncated: false, logs: [],
+        }, {
+          id: 'netlify-edge-history', deploymentId: 'netlify-published', timestamp: Date.now() - 20 * 60 * 1000,
+          source: 'edge', level: 'info', message: 'Past Netlify Edge output', functionName: 'middleware',
+          path: '/checkout', messageTruncated: false, logs: [],
+        }], truncated: false, warnings: [], retry: false };
+      });
+      ipcMain.removeHandler('providers:runtime-start');
+      ipcMain.handle('providers:runtime-start', (event, input) => {
+        if (input.provider !== 'netlify') throw new Error('Expected Netlify runtime stream.');
+        state.started.push(input.subscriptionId);
+        for (const value of [
+          { id: 'netlify-function-history', source: 'serverless', message: 'Past Netlify Function output', functionName: 'checkout', requestId: 'netlify-request-one' },
+          { id: 'netlify-function-live', source: 'serverless', message: 'Live Netlify Function output', functionName: 'checkout' },
+          { id: 'netlify-edge-live', source: 'edge', message: 'Live Netlify Edge output', functionName: 'middleware' },
+        ]) {
+          event.sender.send('providers:runtime-update', {
+            subscriptionId: input.subscriptionId,
+            event: { ...value, timestamp: Date.now(), level: 'info', messageTruncated: false },
+          });
+        }
+      });
+
+      ipcMain.removeHandler('providers:runtime-stop');
+      ipcMain.handle('providers:runtime-stop', (_event, id: string) => { state.stopped.push(id); });
+    });
+    let page = await app.firstWindow();
+    await page.getByTitle('Mute all sounds').click();
+    await page.getByRole('button', { name: 'Create your first project' }).click();
+    await page.getByLabel('Project Name').fill('Netlify project');
+    await page.getByRole('button', { name: 'Create project', exact: true }).click();
+    await page.getByRole('button', { name: 'Add your first application' }).click();
+    await page.getByLabel('Platform', { exact: true }).selectOption('netlify');
+    await page.getByLabel('Connection', { exact: true }).selectOption('account');
+    await expect(page.getByRole('dialog')).toContainText('past-hour Function/Edge Function history');
+    await page.getByLabel('Personal access token', { exact: true }).fill('placeholder-netlify-test-token');
+    await page.getByRole('button', { name: 'Discover applications' }).click();
+    await page.getByRole('button', { name: 'Netlify app', exact: true }).click();
+    await page.getByRole('button', { name: 'Add application', exact: true }).click();
+    await expect(page.getByText('Past Netlify Function output', { exact: true })).toHaveCount(1);
+    await expect(page.getByText('Past Netlify Edge output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Function output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Edge output', { exact: true })).toBeVisible();
+    await page.getByText('Past Netlify Function output', { exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Log details' })).toContainText('checkout');
+    await expect(page.getByRole('dialog', { name: 'Log details' })).toContainText('netlify-request-one');
+    await page.getByLabel('Close log details', { exact: true }).click();
+    await page.getByRole('button', { name: 'serverless', exact: true }).click();
+    await expect(page.getByText('Live Netlify Function output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Edge output', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'edge', exact: true }).click();
+    await expect(page.getByText('Live Netlify Edge output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Function output', { exact: true })).toHaveCount(0);
+    const subscriptionId = await app.evaluate(() => (globalThis as any).__netlifyTest.started[0] as string);
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect.poll(() => app.evaluate((_electron, id) => (globalThis as any).__netlifyTest.stopped.includes(id), subscriptionId)).toBe(true);
+    await app.evaluate(({ BrowserWindow }, id) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('providers:runtime-update', {
+        subscriptionId: id,
+        event: { id: 'late-netlify', timestamp: Date.now(), level: 'info', source: 'edge', message: 'Late cancelled Netlify output', messageTruncated: false },
+      });
+    }, subscriptionId);
+    await expect(page.getByText('Late cancelled Netlify output', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__netlifyTest.historyRequests)).toBe(2);
+    await page.getByRole('button', { name: 'serverless', exact: true }).click();
+    await expect(page.getByText('Past Netlify Function output', { exact: true })).toHaveCount(1);
+    expect(await app.evaluate(() => (globalThis as any).__netlifyTest.buildRequests)).toBe(0);
+    expect(await page.evaluate(() => Object.values(localStorage).join(''))).not.toContain('placeholder-netlify-test-token');
+    await app.close();
+
+    app = await launch();
+    page = await app.firstWindow();
+    await expect(page.getByText('Past Netlify Function output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Past Netlify Edge output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Function output', { exact: true })).toBeVisible();
+    await expect(page.getByText('Live Netlify Edge output', { exact: true })).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});

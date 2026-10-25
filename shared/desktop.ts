@@ -43,6 +43,8 @@ export interface RuntimeEvent {
   host?: string;
   statusCode?: number;
   messageTruncated: boolean;
+  functionName?: string;
+  requestId?: string;
 }
 
 export interface RuntimeLogMessage {
@@ -59,6 +61,8 @@ export interface RuntimeHistoryEvent extends RuntimeEvent {
 export interface RuntimeHistory {
   events: RuntimeHistoryEvent[];
   truncated: boolean;
+  warnings?: string[];
+  retry?: boolean;
 }
 
 export interface ProbeResult {
@@ -75,7 +79,9 @@ export interface ProbeResult {
 
 export interface DesktopBridge {
   platform: string;
-  discover(input: { provider: Provider; apiToken: string; teamId?: string }): Promise<DiscoveredApplication[]>;
+  discover(input: { provider: Provider; teamId?: string } & (
+    { apiToken: string; credentialId?: never } | { credentialId: string; apiToken?: never }
+  )): Promise<DiscoveredApplication[]>;
   deployments(input: ProviderTarget): Promise<Deployment[]>;
   events(input: ProviderTarget & { deploymentId: string }): Promise<BuildEvent[]>;
   runtimeDeployment(input: ProviderTarget): Promise<string | null>;

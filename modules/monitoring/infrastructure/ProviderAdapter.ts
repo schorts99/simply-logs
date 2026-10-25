@@ -14,8 +14,8 @@ const metadata: Record<ProviderType, ProviderMetadata> = {
   },
   netlify: {
     id: 'netlify', name: 'Netlify', icon: '◆', status: 'active',
-    description: 'Deployment status and public URL health checks. Build logs stay in the Netlify dashboard.',
-    supportedSources: ['build', 'probe'],
+    description: 'Deployment status, recent and live Function/Edge Function logs, and public URL health checks. Build logs stay in the Netlify dashboard.',
+    supportedSources: ['build', 'runtime', 'edge', 'serverless', 'probe'],
     docUrl: 'https://docs.netlify.com/deploy/deploy-overview/',
     tokenGuideUrl: 'https://app.netlify.com/user/applications#personal-access-tokens',
   },
@@ -27,11 +27,14 @@ export class ProviderAdapter implements IProviderAdapter {
   getProviderType(): ProviderType { return this.provider; }
   getMetadata(): ProviderMetadata { return metadata[this.provider]; }
 
-  async validateCredentials(credentials: { apiToken?: string; vercelTeamId?: string }): Promise<ConnectionValidationResult> {
-    if (!credentials.apiToken?.trim()) return { valid: false, message: 'Enter a provider token to discover applications.' };
+  async validateCredentials(credentials: { apiToken?: string; credentialId?: string; vercelTeamId?: string }): Promise<ConnectionValidationResult> {
+    const apiToken = credentials.apiToken?.trim();
+    const credentialId = credentials.credentialId?.trim();
+    if (!apiToken && !credentialId) return { valid: false, message: 'Enter a provider token or choose a saved token to discover applications.' };
     try {
       const detectedApps = await this.desktop().discover({
-        provider: this.provider, apiToken: credentials.apiToken.trim(), teamId: credentials.vercelTeamId?.trim(),
+        provider: this.provider, teamId: credentials.vercelTeamId?.trim(),
+        ...(credentialId ? { credentialId } : { apiToken: apiToken! }),
       });
       return { valid: true, detectedApps, message: `Found ${detectedApps.length} applications.` };
     } catch (error) {
@@ -146,16 +149,20 @@ export class ProviderAdapter implements IProviderAdapter {
         historyLoading = true;
         historyStop = this.desktop().loadRuntimeHistory(this.target(app), history => {
           if (!active) return;
-          historyLoaded = true;
+          historyLoaded = !history.retry;
           historyLoading = false;
           for (const event of history.events) {
-            const { id, deploymentId, messageTruncated, logs, ...fields } = event;
+            const { id, deploymentId, messageTruncated, logs, functionName, requestId, ...fields } = event;
             emit(this.entry(app, {
-              ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`, requestId: id,
-              payload: { deploymentId, messageTruncated, historical: true, logs },
+              ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`, requestId: requestId || (this.provider === 'vercel' ? id : undefined),
+              payload: {
+                deploymentId, messageTruncated, historical: true, logs,
+                ...(functionName ? { functionName, requestId, requestPath: fields.path } : {}),
+              },
             }));
           }
-          if (history.truncated) runtimeWarning('Runtime history was limited to the latest 1,000 requests or the provider query limit. Some logs from the past hour may be missing.');
+          history.warnings?.forEach(runtimeWarning);
+          if (history.truncated) runtimeWarning('Runtime history was limited to the latest 1,000 entries or the provider query limit. Some logs from the past hour may be missing.');
         }, message => {
           if (!active) return;
           historyLoading = false;
@@ -184,10 +191,13 @@ export class ProviderAdapter implements IProviderAdapter {
         const version = runtimeGeneration;
         runtimeStop = this.desktop().subscribeRuntimeLogs({ ...target, deploymentId }, event => {
           if (!active || version !== runtimeGeneration) return;
-          const { id, messageTruncated, ...fields } = event;
+          const { id, messageTruncated, functionName, ...fields } = event;
           emit(this.entry(app, {
             ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`,
-            payload: { deploymentId, messageTruncated },
+            payload: {
+              deploymentId, messageTruncated,
+              ...(functionName ? { functionName, requestId: fields.requestId, requestPath: fields.path } : {}),
+            },
           }));
         }, message => {
           if (!active || version !== runtimeGeneration) return;
@@ -217,9 +227,9 @@ export class ProviderAdapter implements IProviderAdapter {
     };
     if (app.deploymentUrl) schedule(() => this.triggerHealthProbe(app, emit), 15000);
     if (app.config.connectionMode === 'account') schedule(() => this.checkDeploymentStatus(app, emit), 30000);
-    if (app.config.connectionMode === 'account' && this.provider === 'vercel') {
+    if (app.config.connectionMode === 'account') {
       if (app.environment === 'development') {
-        runtimeWarning('Vercel runtime logs require a production or preview deployment, not local development.');
+        runtimeWarning(`${metadata[this.provider].name} runtime logs require a production or preview deployment, not local development.`);
       } else schedule(syncRuntime, 30000);
     }
     return () => {

@@ -198,7 +198,7 @@ test('runtime streaming uses the documented endpoint, team scope, stored token a
   await assert.rejects(streamRuntimeLogs({ ...target, deploymentId: 'deploy' }, 'placeholder', () => {}, controller.signal), /abort/i);
 });
 
-test('runtime provider errors, missing tokens and unsupported providers are explicit', async () => {
+test('runtime provider errors, missing tokens and unsupported environments are explicit', async () => {
   for (const status of [401, 403, 404, 410, 429, 500]) {
     await assert.rejects(streamRuntimeLogs(
       { ...target, deploymentId: 'deploy' }, 'placeholder', () => {}, new AbortController().signal,
@@ -206,7 +206,7 @@ test('runtime provider errors, missing tokens and unsupported providers are expl
     ), new RegExp(`HTTP ${status}`));
   }
   await assert.rejects(streamRuntimeLogs({ ...target, deploymentId: 'deploy' }, '', () => {}, new AbortController().signal), /token is required/);
-  await assert.rejects(streamRuntimeLogs({ ...target, provider: 'netlify', deploymentId: 'deploy' }, 'placeholder', () => {}, new AbortController().signal), /only for Vercel/);
+  await assert.rejects(streamRuntimeLogs({ ...target, provider: 'netlify', environment: 'development', deploymentId: 'deploy' }, 'placeholder', () => {}, new AbortController().signal), /local development/);
 });
 
 test('production runtime selection follows the active deployment rather than the newest build', async () => {
@@ -324,10 +324,10 @@ test('a pending runtime selection cannot create a stream after unsubscribe', asy
   assert.equal(logs.length, count);
 });
 
-test('URL-only, Netlify and local development never open runtime streams', async () => {
+test('URL-only applications and local development never request runtime history or streams', async () => {
   for (const app of [
     application(),
-    { ...accountApp(), providerType: 'netlify' as const },
+    { ...accountApp(), providerType: 'netlify' as const, environment: 'development' as const },
     { ...accountApp(), environment: 'development' as const },
   ]) {
     let requests = 0;

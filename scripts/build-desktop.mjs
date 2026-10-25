@@ -9,6 +9,7 @@ await Promise.all([
     format: 'esm',
     target: 'node22',
     external: ['electron'],
+    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   }),
   build({
     entryPoints: ['electron/preload.ts'],

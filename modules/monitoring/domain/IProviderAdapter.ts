@@ -22,7 +22,7 @@ export interface ConnectionValidationResult {
 export interface IProviderAdapter {
   getProviderType(): ProviderType;
   getMetadata(): ProviderMetadata;
-  validateCredentials(credentials: { apiToken?: string; vercelTeamId?: string }): Promise<ConnectionValidationResult>;
+  validateCredentials(credentials: { apiToken?: string; credentialId?: string; vercelTeamId?: string }): Promise<ConnectionValidationResult>;
   subscribeLogs(
     app: Application,
     onLog: (entry: LogEntry) => void

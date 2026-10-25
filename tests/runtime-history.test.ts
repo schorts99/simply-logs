@@ -144,7 +144,7 @@ test('history reports provider errors, missing permissions and malformed respons
   }
   await assert.rejects(runtimeHistory({ ...target, teamId: undefined }, 'fixture-token', new AbortController().signal, async () => response({ id: 'project' })), /project owner/);
   await assert.rejects(runtimeHistory(target, '', new AbortController().signal), /token is required/);
-  await assert.rejects(runtimeHistory({ ...target, provider: 'netlify' }, 'fixture-token', new AbortController().signal), /only for Vercel/);
+  await assert.rejects(runtimeHistory({ ...target, provider: 'netlify' }, '', new AbortController().signal), /token is required/);
   await assert.rejects(runtimeHistory({ ...target, environment: 'development' }, 'fixture-token', new AbortController().signal), /local development/);
 });
 

@@ -167,7 +167,12 @@ function MainApp() {
       throw cause;
     }
     if (previousCredential && previousCredential !== app.config.credentialId) {
-      try { await getDesktop().deleteCredential(previousCredential); }
+      try {
+        const allApps = await projectRepository.getApplications();
+        if (!allApps.some(item => item.config.credentialId === previousCredential)) {
+          await getDesktop().deleteCredential(previousCredential);
+        }
+      }
       catch { setNotice('Application saved, but its previous credential could not be removed from the local vault. Check storage access.'); }
     }
     await refreshApps();

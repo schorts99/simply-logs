@@ -33,6 +33,34 @@ test('failed provider requests produce unknown state, never a healthy deployment
   }
 });
 
+test('both providers discover with a saved credential ID without requesting or forwarding its token value', async () => {
+  for (const provider of ['vercel', 'netlify'] as const) {
+    const requests: Parameters<ReturnType<typeof desktop>['discover']>[0][] = [];
+    const detectedApps = [{ name: 'Another app', slug: 'another-app' }];
+    const adapter = new ProviderAdapter(provider, () => desktop({
+      discover: async input => { requests.push(input); return detectedApps; },
+    }));
+    const result = await adapter.validateCredentials({ credentialId: ' shared-credential ', vercelTeamId: ' team-two ' });
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.detectedApps, detectedApps);
+    assert.deepEqual(requests[0], { provider, credentialId: 'shared-credential', teamId: 'team-two' });
+    assert.equal(Object.hasOwn(requests[0], 'apiToken'), false);
+    await adapter.validateCredentials({ apiToken: ' placeholder-new-token ' });
+    assert.deepEqual(requests[1], { provider, apiToken: 'placeholder-new-token', teamId: undefined });
+    assert.equal(Object.hasOwn(requests[1], 'credentialId'), false);
+  }
+});
+
+test('unavailable saved credentials are reported without fabricated application discovery', async () => {
+  const adapter = new ProviderAdapter('vercel', () => desktop({
+    discover: async () => { throw new Error('No saved token. Reconnect this application.'); },
+  }));
+  const result = await adapter.validateCredentials({ credentialId: 'missing-token' });
+  assert.equal(result.valid, false);
+  assert.match(result.message!, /No saved token/);
+  assert.equal(result.detectedApps, undefined);
+});
+
 test('stream scope switches discard old logs and late asynchronous observations', () => {
   const callbacks = new Map<string, (log: LogEntry) => void>();
   const adapter = new ProviderAdapter('vercel');

@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
-import { request } from 'node:https';
+import { Agent, request } from 'node:https';
 import ipaddr from 'ipaddr.js';
+import WebSocket from 'ws';
 
 export function isPublicAddress(address: string): boolean {
   try {
@@ -68,6 +69,61 @@ export async function resolvePublicHost(
   }
   signal.throwIfAborted();
   return addresses[0];
+}
+
+export async function publicWebSocket(
+  input: string, authentication: Record<string, unknown>, onValue: (value: unknown) => void, signal: AbortSignal,
+  connect = (url: URL, options: WebSocket.ClientOptions) => new WebSocket(url, options),
+): Promise<void> {
+  const url = new URL(input);
+  if (url.protocol !== 'wss:') throw new Error('Runtime log streams require a secure WebSocket URL.');
+  const httpsUrl = new URL(url);
+  httpsUrl.protocol = 'https:';
+  validatePublicUrl(httpsUrl.href);
+  const address = await resolvePublicHost(
+    url.hostname.replace(/^\[|\]$/g, ''),
+    AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+  );
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const agent = new Agent({
+      keepAlive: false,
+      lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),
+    });
+    const socket = connect(url, {
+      agent, family: address.family, followRedirects: false, handshakeTimeout: 8000,
+      maxPayload: 2 * 1024 * 1024, perMessageDeflate: false,
+    });
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      agent.destroy();
+      if (error) { reject(error); socket.terminate(); }
+      else resolve();
+    };
+    const abort = () => finish(signal.reason);
+    socket.on('error', error => finish(error));
+    socket.once('close', (code, reason) => finish(code !== 1000 && code !== 1005
+      ? new Error(`Runtime WebSocket closed (${code})${reason.length ? `: ${reason.toString().slice(0, 256)}` : '.'}`)
+      : undefined));
+    socket.once('open', () => {
+      if (settled) return;
+      socket.send(JSON.stringify(authentication), error => { if (error) finish(error); });
+    });
+    socket.on('message', (data, isBinary) => {
+      if (settled) return;
+      try {
+        if (isBinary) throw new Error('Unexpected binary runtime log message.');
+        onValue(JSON.parse(data.toString()));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error('Invalid runtime log message.'));
+      }
+    });
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 export async function publicRequest(

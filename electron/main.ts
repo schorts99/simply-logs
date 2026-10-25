@@ -132,9 +132,16 @@ else {
         },
       });
     });
-    handle('providers:discover', input => {
+    handle('providers:discover', async input => {
       if (!input || typeof input !== 'object') throw new Error('Invalid discovery input.');
-      return discover(provider(input.provider), text(input.apiToken, 4096), input.teamId ? text(input.teamId, 256) : undefined);
+      const selectedProvider = provider(input.provider);
+      if ((input.apiToken !== undefined) === (input.credentialId !== undefined)) {
+        throw new Error('Choose either a saved token or a new token.');
+      }
+      const token = input.credentialId !== undefined
+        ? await credentials.get(text(input.credentialId, 256))
+        : text(input.apiToken, 4096);
+      return discover(selectedProvider, token, input.teamId ? text(input.teamId, 256) : undefined);
     });
     handle('providers:deployments', async input => {
       const selected = target(input);
