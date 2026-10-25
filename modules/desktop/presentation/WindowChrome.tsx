@@ -3,13 +3,14 @@ import type { Project, Application } from '../../projects/domain/Project';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { PixelCat } from '../../companion/presentation/PixelCat';
 import type { CatMood, CatBreed } from '../../companion/domain/CatTypes';
-import { ChevronDown, FolderPlus, Sparkles, BellRing, Trash2 } from 'lucide-react';
+import { ChevronDown, FolderPlus, Sparkles, BellRing, Trash2, Pencil } from 'lucide-react';
 
 interface WindowChromeProps {
   projects: Project[];
   selectedProject: Project | null;
   onSelectProject: (project: Project) => void;
   onOpenCreateProject: () => void;
+  onOpenEditProject: () => void;
   onDeleteProject: () => void;
   applications: Application[];
   activeLogMood: CatMood;
@@ -66,6 +67,12 @@ export const WindowChrome: React.FC<WindowChromeProps> = props => {
                 className="w-full px-3 py-2 text-left text-xs text-indigo-500 flex items-center gap-2 rounded-lg hover:bg-indigo-500/10">
                 <FolderPlus className="w-3.5 h-3.5" /> Create project
               </button>
+              {props.selectedProject && (
+                <button onClick={() => { setOpen(false); props.onOpenEditProject(); }}
+                  className="w-full px-3 py-2 text-left text-xs text-neutral-700 dark:text-neutral-300 flex items-center gap-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  <Pencil className="w-3.5 h-3.5" /> Edit current project
+                </button>
+              )}
               {props.selectedProject && (
                 <button onClick={() => { setOpen(false); props.onDeleteProject(); }}
                   className="w-full px-3 py-2 text-left text-xs text-rose-500 flex items-center gap-2 rounded-lg hover:bg-rose-500/10">

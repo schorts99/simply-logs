@@ -27,6 +27,36 @@ test('new workspaces are empty and saved applications are filtered by project', 
   assert.equal((await repository.getApplications('project-two')).length, 0);
 });
 
+test('project updates replace metadata without duplicating projects or changing linked applications', async () => {
+  const project = { id: 'project-one', name: 'Original', description: 'Before', color: '#6366f1', tags: ['Production'], createdAt: 0 };
+  const other = { ...project, id: 'project-two', name: 'Other' };
+  const app = application({ config: { connectionMode: 'account', credentialId: 'shared-token', vercelProjectId: 'provider-project' } });
+  const values = storage({
+    simply_logs_projects_v1: JSON.stringify([project, other]),
+    simply_logs_apps_v1: JSON.stringify([app]),
+  });
+  const repository = new LocalStorageProjectRepository();
+  const updated = { ...project, name: 'Renamed', description: '', color: '#10b981', tags: ['Customer-facing'] };
+  await repository.saveProject(updated);
+  assert.deepEqual(await repository.getProjects(), [updated, other]);
+  assert.equal(values.get('simply_logs_apps_v1'), JSON.stringify([app]));
+  assert.equal((await repository.getApplications())[0].config.credentialId, 'shared-token');
+});
+
+test('failed project edits leave saved metadata and application references unchanged', async () => {
+  const project = { id: 'project-one', name: 'Original', description: 'Before', color: '#6366f1', tags: [], createdAt: 1000 };
+  const app = application();
+  const values = storage({
+    simply_logs_projects_v1: JSON.stringify([project]),
+    simply_logs_apps_v1: JSON.stringify([app]),
+  });
+  localStorage.setItem = () => { throw new Error('Storage full'); };
+  const repository = new LocalStorageProjectRepository();
+  await assert.rejects(repository.saveProject({ ...project, name: 'Unsaved' }), /could not be saved/);
+  assert.deepEqual(await repository.getProjects(), [project]);
+  assert.equal(values.get('simply_logs_apps_v1'), JSON.stringify([app]));
+});
+
 test('unavailable or corrupt storage reports an error without injecting demo applications', async () => {
   storage({ simply_logs_apps_v1: '{broken' });
   const repository = new LocalStorageProjectRepository();

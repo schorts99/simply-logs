@@ -19,6 +19,7 @@ interface ProjectSidebarProps {
   onSelectApp: (appId: string | null) => void;
   onOpenAddAppModal: () => void;
   onOpenCreateProjectModal: () => void;
+  onOpenEditProjectModal: () => void;
   onDeleteApp: (appId: string) => void;
   onEditApp: (app: Application) => void;
   catMood: CatMood;
@@ -36,6 +37,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   onSelectApp,
   onOpenAddAppModal,
   onOpenCreateProjectModal,
+  onOpenEditProjectModal,
   onDeleteApp,
   onEditApp,
   catMood,
@@ -72,13 +74,23 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
             <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold">
               Project Context
             </span>
-            <button
-              onClick={onOpenCreateProjectModal}
-              title="Create new project"
-              className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
-            >
-              <Plus className="w-3 h-3" /> New
-            </button>
+            <div className="flex items-center gap-2">
+              {currentProject && <button
+                onClick={onOpenEditProjectModal}
+                aria-label="Edit project"
+                title="Edit project"
+                className="text-neutral-400 hover:text-indigo-500 p-0.5"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>}
+              <button
+                onClick={onOpenCreateProjectModal}
+                title="Create new project"
+                className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
+              >
+                <Plus className="w-3 h-3" /> New
+              </button>
+            </div>
           </div>
 
           <div className="flex items-start gap-2.5">

@@ -43,7 +43,7 @@ function MainApp() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'probe' | 'deployments' | null>(null);
   const [appModal, setAppModal] = useState<Application | 'new' | null>(null);
-  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectModal, setProjectModal] = useState<Project | 'new' | null>(null);
   const [customizerOpen, setCustomizerOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
@@ -190,11 +190,13 @@ function MainApp() {
     }
   };
 
-  const createProject = async (project: Project) => {
+  const saveProject = async (project: Project) => {
     await projectRepository.saveProject(project);
     setProjects(await projectRepository.getProjects());
-    setProjectId(project.id);
-    setActiveEnv('all');
+    if (projectModal === 'new') {
+      setProjectId(project.id);
+      setActiveEnv('all');
+    }
   };
 
   const deleteProject = async () => {
@@ -224,7 +226,8 @@ function MainApp() {
     <div className="h-screen w-screen flex flex-col bg-neutral-100 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 font-sans overflow-hidden">
       <WindowChrome projects={projects} selectedProject={selectedProject}
         onSelectProject={project => { setProjectId(project.id); setActiveEnv('all'); }}
-        onOpenCreateProject={() => setCreateProjectOpen(true)} onDeleteProject={() => void deleteProject()}
+        onOpenCreateProject={() => setProjectModal('new')} onOpenEditProject={() => setProjectModal(selectedProject)}
+        onDeleteProject={() => void deleteProject()}
         applications={currentApplications} activeLogMood={catMood} catBreed={catBreed} onPetCat={handlePet}
         onOpenCatCustomizer={() => setCustomizerOpen(true)} unreadNotificationCount={unread} onOpenNotifications={() => setNotificationsOpen(true)} />
       {(error || historyError || notice || !window.simplyLogs) && (
@@ -240,14 +243,15 @@ function MainApp() {
           <img src="./icon.svg" alt="Cat with terminal log lines" className="w-24 h-24" />
           <div><h2 className="text-2xl font-semibold">Less noise. More peace of mind.</h2>
             <p className="text-sm text-neutral-500 mt-3 max-w-md">Group your applications, follow deployment logs, and check live health. No demo traffic, no invented incidents. Just your services and a cat on watch.</p></div>
-          <button onClick={() => setCreateProjectOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm font-medium"><FolderPlus className="w-4 h-4" /> Create your first project</button>
+          <button onClick={() => setProjectModal('new')} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm font-medium"><FolderPlus className="w-4 h-4" /> Create your first project</button>
           <p className="text-xs text-neutral-500">Tokens stay on your device. Monitoring runs while Simply Logs is open.</p>
         </main>
       ) : (
         <div className="flex-1 flex overflow-hidden">
           <ProjectSidebar currentProject={selectedProject} applications={currentApplications} selectedAppId={selectedAppId}
             onSelectApp={setSelectedAppId} onOpenAddAppModal={() => setAppModal('new')} onEditApp={setAppModal}
-            onOpenCreateProjectModal={() => setCreateProjectOpen(true)} onDeleteApp={id => void deleteApp(id)}
+            onOpenCreateProjectModal={() => setProjectModal('new')} onOpenEditProjectModal={() => setProjectModal(selectedProject)}
+            onDeleteApp={id => void deleteApp(id)}
             catMood={catMood} catBreed={catBreed} onPetCat={handlePet} onOpenCatCustomizer={() => setCustomizerOpen(true)}
             activeEnv={activeEnv} onSelectEnv={environment => { setActiveEnv(environment); setSelectedAppId(null); setSelectedLog(null); }} />
           <main className="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -275,7 +279,9 @@ function MainApp() {
       {selectedProject && appModal && <AddApplicationModal key={appModal === 'new' ? 'new' : appModal.id}
         projectId={selectedProject.id} application={appModal === 'new' ? undefined : appModal}
         onClose={() => setAppModal(null)} onAddApplication={saveApplication} />}
-      {createProjectOpen && <CreateProjectModal isOpen onClose={() => setCreateProjectOpen(false)} onCreateProject={createProject} />}
+      {projectModal && <CreateProjectModal key={projectModal === 'new' ? 'new' : projectModal.id} isOpen
+        project={projectModal === 'new' ? undefined : projectModal}
+        onClose={() => setProjectModal(null)} onSaveProject={saveProject} />}
       <CatCustomizerModal isOpen={customizerOpen} currentBreed={catBreed} onSelectBreed={breed => { setCatBreed(breed); CatBreedStorage.setBreed(breed); }}
         onClose={() => setCustomizerOpen(false)} onPet={handlePet} />
       <LogDetailModal log={selectedLog} onClose={() => setSelectedLog(null)} />

@@ -1,23 +1,25 @@
 import React, { useState } from 'react';
 import { Project } from '../domain/Project';
-import { X, FolderPlus } from 'lucide-react';
+import { X, FolderPlus, Pencil } from 'lucide-react';
 import { useDialog } from '../../desktop/application/useDialog';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
+  project?: Project;
   onClose: () => void;
-  onCreateProject: (project: Project) => Promise<void>;
+  onSaveProject: (project: Project) => Promise<void>;
 }
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   isOpen,
+  project,
   onClose,
-  onCreateProject
+  onSaveProject
 }) => {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [color, setColor] = useState('#6366f1');
-  const [tagsInput, setTagsInput] = useState('');
+  const [name, setName] = useState(project?.name || '');
+  const [description, setDescription] = useState(project?.description || '');
+  const [color, setColor] = useState(project?.color || '#6366f1');
+  const [tagsInput, setTagsInput] = useState(project?.tags.join(', ') || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useDialog(isOpen, () => { if (!saving) onClose(); });
@@ -37,25 +39,30 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (saving) return;
+    setError(null);
+    if (!name.trim()) {
+      setError('Enter a project name.');
+      return;
+    }
 
     const tags = tagsInput
       .split(',')
       .map(t => t.trim())
       .filter(Boolean);
 
-    const newProject: Project = {
-      id: crypto.randomUUID(),
+    const nextProject: Project = {
+      id: project?.id ?? crypto.randomUUID(),
       name: name.trim(),
-      description: description.trim() || 'Cloud Infrastructure Project',
+      description: description.trim() || (project ? '' : 'Cloud Infrastructure Project'),
       color,
       tags,
-      createdAt: Date.now()
+      createdAt: project?.createdAt ?? Date.now()
     };
 
     setSaving(true);
     try {
-      await onCreateProject(newProject);
+      await onSaveProject(nextProject);
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save this project.');
@@ -68,8 +75,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       <div className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
           <h3 id="project-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
-            <FolderPlus className="w-4 h-4 text-indigo-500" />
-            Create project
+            {project ? <Pencil className="w-4 h-4 text-indigo-500" /> : <FolderPlus className="w-4 h-4 text-indigo-500" />}
+            {project ? 'Edit project' : 'Create project'}
           </h3>
           <button
             aria-label="Close project dialog"
@@ -101,10 +108,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
+            <label htmlFor="project-description" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
               Description
             </label>
             <input
+              id="project-description"
+              disabled={saving}
               type="text"
               placeholder="e.g. High-throughput edge infrastructure"
               value={description}
@@ -122,6 +131,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 <button
                   key={c}
                   type="button"
+                  disabled={saving}
                   onClick={() => setColor(c)}
                   className={`w-6 h-6 rounded-full transition-transform ${
                     color === c ? 'scale-125 ring-2 ring-neutral-400 dark:ring-neutral-500 ring-offset-2 dark:ring-offset-neutral-900' : 'hover:scale-110'
@@ -135,10 +145,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
+            <label htmlFor="project-tags" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
               Tags (comma separated)
             </label>
             <input
+              id="project-tags"
+              disabled={saving}
               type="text"
               placeholder="Production, Vercel, Netlify"
               value={tagsInput}
@@ -162,7 +174,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               disabled={saving}
               className="px-4 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium shadow-sm transition-colors"
             >
-              {saving ? 'Saving…' : 'Create project'}
+              {saving ? 'Saving…' : project ? 'Save changes' : 'Create project'}
             </button>
           </div>
         </form>

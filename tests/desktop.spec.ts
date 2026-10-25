@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { application, entry } from './fixtures';
+import type { Project } from '../modules/projects/domain/Project';
 
 test('desktop onboarding, real-data boundaries, filtering, pause and shared mute', async ({}, info) => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-desktop-'));
@@ -416,6 +417,134 @@ for (const provider of ['vercel', 'netlify'] as const) {
     }
   });
 }
+
+test('project editing saves metadata without changing applications, logs, filters or monitoring state', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-project-edit-'));
+  const app = await electron.launch({
+    args: [
+      '.', `--user-data-dir=${profile}`, '--disable-gpu',
+      ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
+    env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Create your first project' })).toBeVisible();
+    const original: Project = {
+      id: 'project-one', name: 'Original project', description: 'Original description',
+      color: '#6366f1', tags: ['Production', 'Vercel'], createdAt: 0,
+    };
+    const other: Project = { ...original, id: 'project-two', name: 'Other project', description: 'Other description', tags: [] };
+    const applications = [
+      application({ name: 'Preview app', environment: 'preview', deploymentUrl: undefined }),
+      application({ id: 'production-app', name: 'Production app', deploymentUrl: undefined }),
+    ];
+    const logs = [
+      entry({ id: 'preview-log', applicationName: 'Preview app', environment: 'preview', message: 'Preview log retained' }),
+      entry({ id: 'production-log', applicationId: 'production-app', applicationName: 'Production app', message: 'Production log retained' }),
+    ];
+    await page.evaluate(({ projects, applications, logs }) => {
+      localStorage.setItem('simply_logs_projects_v1', JSON.stringify(projects));
+      localStorage.setItem('simply_logs_apps_v1', JSON.stringify(applications));
+      localStorage.setItem('simply_logs_history_v1', JSON.stringify(logs));
+    }, { projects: [original, other], applications, logs });
+    await page.reload();
+    await page.getByRole('button', { name: 'prev', exact: true }).click();
+    await page.getByRole('button', { name: 'Select Preview app', exact: true }).click();
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    const linkedData = () => page.evaluate(() => ({
+      applications: localStorage.getItem('simply_logs_apps_v1'),
+      logs: localStorage.getItem('simply_logs_history_v1'),
+    }));
+    const before = await linkedData();
+    const savedProjects = () => page.evaluate(() => JSON.parse(localStorage.getItem('simply_logs_projects_v1')!) as Project[]);
+    await page.getByRole('button', { name: 'Original project', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit current project', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit project', exact: true });
+    await expect(dialog.getByLabel('Project Name')).toHaveValue(original.name);
+    await expect(dialog.getByLabel('Project Name')).toBeFocused();
+    await expect(dialog.getByLabel('Description', { exact: true })).toHaveValue(original.description);
+    await expect(dialog.getByLabel('Tags (comma separated)', { exact: true })).toHaveValue('Production, Vercel');
+    await expect(dialog.getByRole('button', { name: `Project color ${original.color}`, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await dialog.getByLabel('Project Name').fill('   ');
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('Enter a project name.');
+    expect(await savedProjects()).toEqual([original, other]);
+    await dialog.getByLabel('Project Name').fill('  Renamed project  ');
+    await dialog.getByLabel('Description', { exact: true }).fill('  Updated description  ');
+    await dialog.getByLabel('Tags (comma separated)', { exact: true }).fill('Customer-facing, Production, , ');
+    await dialog.getByRole('button', { name: 'Project color #10b981', exact: true }).click();
+    await page.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      (window as any).__restoreProjectStorage = () => { Storage.prototype.setItem = original; };
+      Storage.prototype.setItem = function(key, value) {
+        if (key === 'simply_logs_projects_v1') throw new Error('Storage full');
+        original.call(this, key, value);
+      };
+    });
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText('Changes could not be saved');
+    await expect(dialog.getByLabel('Project Name')).toHaveValue('  Renamed project  ');
+    expect(await savedProjects()).toEqual([original, other]);
+    await page.evaluate(() => (window as any).__restoreProjectStorage());
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const updated = { ...original, name: 'Renamed project', description: 'Updated description', color: '#10b981', tags: ['Customer-facing', 'Production'] };
+    expect(await savedProjects()).toEqual([updated, other]);
+    await expect(page.getByRole('heading', { name: updated.name, exact: true })).toBeVisible();
+    await expect(page.getByText(updated.description, { exact: true })).toBeVisible();
+    await expect(page.getByText('Customer-facing', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: updated.name, exact: true }).locator('span').first()).toHaveCSS('background-color', 'rgb(16, 185, 129)');
+    await expect(page.getByRole('button', { name: 'Select Preview app', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: 'Select Production app', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Preview log retained', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+    expect(await linkedData()).toEqual(before);
+
+    await page.getByRole('button', { name: 'Edit project', exact: true }).click();
+    await expect(dialog.getByLabel('Project Name')).toHaveValue(updated.name);
+    await expect(dialog.getByLabel('Description', { exact: true })).toHaveValue(updated.description);
+    await expect(dialog.getByLabel('Tags (comma separated)', { exact: true })).toHaveValue('Customer-facing, Production');
+    await expect(dialog.getByRole('button', { name: 'Project color #10b981', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await dialog.getByLabel('Project Name').fill('Discard this draft');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(await savedProjects()).toEqual([updated, other]);
+    await page.getByRole('button', { name: 'Edit project', exact: true }).click();
+    await expect(dialog.getByLabel('Project Name')).toHaveValue(updated.name);
+    await dialog.getByLabel('Description', { exact: true }).fill('');
+    await dialog.getByLabel('Tags (comma separated)', { exact: true }).fill('');
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const cleared = { ...updated, description: '', tags: [] };
+    expect(await savedProjects()).toEqual([cleared, other]);
+    await page.getByTitle('Create new project', { exact: true }).click();
+    const create = page.getByRole('dialog', { name: 'Create project', exact: true });
+    await expect(create.getByLabel('Project Name')).toHaveValue('');
+    await expect(create.getByLabel('Description', { exact: true })).toHaveValue('');
+    await expect(create.getByLabel('Tags (comma separated)', { exact: true })).toHaveValue('');
+    await expect(create.getByRole('button', { name: 'Project color #6366f1', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await create.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: cleared.name, exact: true })).toBeVisible();
+    await expect(page.getByText('Preview log retained', { exact: true })).toBeVisible();
+    await expect(page.getByText('Production log retained', { exact: true })).toBeVisible();
+    expect(await linkedData()).toEqual(before);
+    expect(await savedProjects()).toEqual([cleared, other]);
+    await page.getByRole('button', { name: cleared.name, exact: true }).click();
+    await page.getByRole('button', { name: other.name, exact: true }).click();
+    await page.getByRole('button', { name: 'Edit project', exact: true }).click();
+    await expect(dialog.getByLabel('Project Name')).toHaveValue(other.name);
+    await expect(dialog.getByLabel('Description', { exact: true })).toHaveValue(other.description);
+    await dialog.getByLabel('Project Name').fill('Other renamed');
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await savedProjects()).toEqual([cleared, { ...other, name: 'Other renamed' }]);
+    await expect(page.getByRole('button', { name: 'Other renamed', exact: true })).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 test('HTTP method badges distinguish matching requests and remain available in search, copies and exports', async () => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-http-methods-'));
