@@ -84,8 +84,10 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await expect(page).toHaveTitle('Simply Logs');
     if (process.platform !== 'darwin') {
       expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible()))
-        .toBe(process.platform !== 'win32');
+        .toBe(false);
       expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarAutoHide())).toBe(false);
+      await page.keyboard.press('Alt');
+      expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())).toBe(false);
     }
     await expect(page.getByRole('heading', { name: 'Simply Logs', exact: true })).toBeVisible();
     await expect(page.getByTitle('Toggle window style (macOS / Windows)')).toHaveCount(0);

@@ -4,7 +4,7 @@
 
 A local-first Electron app for Windows, Linux, and macOS. Follow deployment activity, inspect Vercel build logs and Vercel/Netlify runtime logs, and check public application health with a small cat companion. The operating system provides real window controls; there is no window-style preview switch.
 
-On Windows, the File/Edit/View menu bar is hidden, including when pressing Alt; its keyboard shortcuts remain available. macOS and Linux keep their native menus.
+On Windows and Linux, the File/Edit/View menu bar is hidden, including when pressing Alt; its keyboard shortcuts remain available. macOS keeps its native menus.
 
 ## Run locally
 

@@ -86,7 +86,7 @@ async function createWindow(): Promise<void> {
       webSecurity: true,
     },
   });
-  if (process.platform === 'win32') window.setMenuBarVisibility(false);
+  if (process.platform === 'win32' || process.platform === 'linux') window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window?.show());
   window.on('closed', () => { stopRuntimeStreams(); window = null; });
   window.webContents.on('did-start-loading', stopRuntimeStreams);
