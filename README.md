@@ -36,7 +36,7 @@ Projects and environment selection scope the log viewer, counters, exports, and 
 
 To update a project's name, description, color or tags, use **Edit current project** in the project selector, or the pencil button beside **Project Context** in the sidebar. Editing preserves its applications, credentials, logs and current monitoring/filter selections. Descriptions and tags can be cleared; changes are saved locally.
 
-Log rows show an HTTP method badge when the provider supplies one, so an `OPTIONS` preflight is distinguishable from the actual request. Methods are searchable (case-insensitive) and included in copied log text and JSON exports; logs without a method are not assigned one.
+Log rows show the request route above the message and an HTTP method badge when the provider supplies them, so an `OPTIONS` preflight is distinguishable from the actual request. Routes, methods and hosts are searchable (case-insensitive); routes and methods are included in copied log text and JSON exports. Open a log to inspect its route, host, request ID, environment, deployment ID and function alongside status, latency and region. Missing context is labeled **Not provided** rather than inferred from the application's URL; build logs need not belong to a request.
 
 **Pause** stops polling and ignores in-flight observations. Resume collects fresh state. Space toggles monitoring unless focus is in a control or dialog. Alerts are deduplicated by application and monitor type; recovery requires a fresh healthy observation after the configured recovery window, not silence. The footer sound switch and alert settings share one setting, including cat sounds.
 

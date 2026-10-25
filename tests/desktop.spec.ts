@@ -566,7 +566,7 @@ test('project editing saves metadata without changing applications, logs, filter
   }
 });
 
-test('HTTP method badges distinguish matching requests and remain available in search, copies and exports', async () => {
+test('request routes and HTTP methods remain available in rows, details, search, copies and exports', async () => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-http-methods-'));
   const app = await electron.launch({
     args: [
@@ -590,10 +590,17 @@ test('HTTP method badges distinguish matching requests and remain available in s
       ...methods.map(method => entry({
         id: `request-${method}`, applicationName: savedApp.name, source: 'serverless', method, path: '/api/orders',
         statusCode: method === 'POST' ? 201 : 204, latencyMs: 24, region: 'iad1', message: 'Same request output',
+        host: 'requests.example.com', requestId: `provider-${method}`,
+        payload: { deploymentId: 'deployment-orders', functionName: 'orders' },
         observation: undefined, monitorKind: undefined,
       })),
       entry({
         id: 'no-method', applicationName: savedApp.name, source: 'build', message: 'Deployment ready',
+        observation: undefined, monitorKind: undefined,
+      }),
+      entry({
+        id: 'no-route', applicationName: savedApp.name, source: 'serverless', message: 'Console output without request metadata',
+        statusCode: undefined, latencyMs: undefined,
         observation: undefined, monitorKind: undefined,
       }),
     ];
@@ -606,7 +613,7 @@ test('HTTP method badges distinguish matching requests and remain available in s
     }, { savedApp, savedLogs });
     await page.reload();
     const workspace = page.getByRole('main');
-    const requestRows = workspace.getByText('Same request output', { exact: true }).locator('..');
+    const requestRows = workspace.getByText('Same request output', { exact: true }).locator('../..');
     await expect(requestRows).toHaveCount(methods.length);
     for (const size of [{ width: 1280, height: 820 }, { width: 920, height: 620 }]) {
       await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), size);
@@ -616,18 +623,29 @@ test('HTTP method badges distinguish matching requests and remain available in s
         await row.scrollIntoViewIfNeeded();
         await expect(row.getByTitle(`HTTP method: ${method}`, { exact: true })).toHaveText(method);
         await expect(row.getByTitle(`HTTP method: ${method}`, { exact: true })).toBeInViewport({ ratio: 1 });
+        await expect(row.getByTitle('Request route: /api/orders', { exact: true })).toBeInViewport({ ratio: 1 });
         await expect(row.getByTitle('Inspect log details')).toBeInViewport({ ratio: 1 });
       }
     }
-    const noMethod = workspace.getByText('Deployment ready', { exact: true }).locator('..');
+    const noMethod = workspace.getByText('Deployment ready', { exact: true }).locator('../..');
     await expect(noMethod.locator('[title^="HTTP method:"]')).toHaveCount(0);
+    await expect(noMethod.locator('[title^="Request route:"]')).toHaveCount(0);
+    const noRoute = workspace.getByText('Console output without request metadata', { exact: true }).locator('../..');
+    await expect(noRoute.getByText('Route not provided', { exact: true })).toBeVisible();
+    await noRoute.getByTitle('Inspect log details').click();
+    const missingContext = page.getByRole('region', { name: 'Request context' });
+    await expect(missingContext.getByRole('definition').first()).toHaveText('Not provided');
+    await expect(missingContext.getByRole('definition').nth(1)).toHaveText('Not provided');
+    await expect(missingContext.getByRole('definition').nth(2)).toHaveText('Not provided');
+    await expect(page.getByRole('dialog').getByText('Global Edge', { exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
     const search = page.getByPlaceholder('Search logs', { exact: false });
     await search.fill('oPtIoNs');
     await expect(requestRows).toHaveCount(1);
     await expect(workspace.getByTitle('HTTP method: OPTIONS', { exact: true })).toBeVisible();
     await expect(noMethod).toHaveCount(0);
     await page.getByTitle('Copy filtered logs to clipboard', { exact: true }).click();
-    expect(await app.evaluate(() => (globalThis as any).__methodCopy)).toContain('[OPTIONS] Same request output');
+    expect(await app.evaluate(() => (globalThis as any).__methodCopy)).toContain('[OPTIONS] [/api/orders] Same request output');
     await page.getByTitle('Export logs as JSON file', { exact: true }).click();
     const exported = JSON.parse(await app.evaluate(() => (globalThis as any).__methodExport as string));
     expect(exported).toHaveLength(1);
@@ -636,15 +654,25 @@ test('HTTP method badges distinguish matching requests and remain available in s
     await search.fill('post');
     await expect(requestRows).toHaveCount(1);
     await workspace.getByTitle('Inspect log details').click();
-    await expect(page.getByRole('dialog', { name: 'Log details' })).toContainText('POST (201)');
+    const details = page.getByRole('dialog', { name: 'Log details' });
+    await expect(details).toContainText('POST (201)');
+    const context = details.getByRole('region', { name: 'Request context' });
+    for (const [label, value] of [
+      ['Route', '/api/orders'], ['Host', 'requests.example.com'], ['Request ID', 'provider-POST'],
+      ['Environment', 'production'], ['Deployment ID', 'deployment-orders'], ['Function', 'orders'],
+    ]) {
+      await expect(context.locator('div').filter({ has: page.getByRole('term').filter({ hasText: new RegExp(`^${label}$`) }) }).getByRole('definition')).toHaveText(value);
+    }
     await page.keyboard.press('Escape');
     await search.fill('/api/orders');
+    await expect(requestRows).toHaveCount(methods.length);
+    await search.fill('REQUESTS.EXAMPLE.COM');
     await expect(requestRows).toHaveCount(methods.length);
     await search.fill('');
     await expect(requestRows).toHaveCount(methods.length);
     await page.getByTitle('Copy filtered logs to clipboard', { exact: true }).click();
     const copied = await app.evaluate(() => (globalThis as any).__methodCopy as string);
-    for (const method of methods) expect(copied).toContain(`[${method}] Same request output`);
+    for (const method of methods) expect(copied).toContain(`[${method}] [/api/orders] Same request output`);
     expect(copied.split('\n').find(line => line.includes('Deployment ready'))).toMatch(/\[Request demo\] Deployment ready$/);
     await page.getByTitle('Export logs as JSON file', { exact: true }).click();
     const allExported = JSON.parse(await app.evaluate(() => (globalThis as any).__methodExport as string));
@@ -675,6 +703,8 @@ test('large log details keep header controls visible, copy full JSON and dismiss
     const savedApp = application({ name: `Application-${'a'.repeat(300)}`, deploymentUrl: undefined });
     const largeLog = entry({
       id: `request-${'b'.repeat(400)}`, applicationName: savedApp.name, level: 'error', source: 'serverless',
+      path: `/api/${'long-route-segment/'.repeat(80)}?page=2`, host: `${'hostname'.repeat(40)}.example.com`,
+      requestId: `provider-${'c'.repeat(400)}`,
       message: ['Large log fixture', ...Array.from({ length: 150 }, (_, i) => `Message line ${i}: ${'details '.repeat(20)}`)].join('\n'),
       stackTrace: ['Error: large log fixture', ...Array.from({ length: 80 }, (_, i) => `  at handler (/functions/${'path'.repeat(40)}:${i})`)].join('\n'),
       payload: { requestId: 'full-request-id', data: 'x'.repeat(3000), lines: Array.from({ length: 50 }, (_, i) => `Payload line ${i}`) },
@@ -697,6 +727,7 @@ test('large log details keep header controls visible, copy full JSON and dismiss
     for (const size of [{ width: 1280, height: 820 }, { width: 920, height: 620 }]) {
       await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), size);
       await logRow.click();
+      await expect(dialog.getByRole('region', { name: 'Request context' }).getByRole('definition').nth(1)).toHaveText(largeLog.host!);
       const copy = dialog.getByRole('button', { name: 'Copy Log JSON', exact: true });
       const close = dialog.getByRole('button', { name: 'Close log details', exact: true });
       await expect(copy).toBeFocused();
@@ -713,6 +744,7 @@ test('large log details keep header controls visible, copy full JSON and dismiss
       expect(await header.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       expect(await body.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await expect(dialog.getByRole('region', { name: 'Request context' }).getByRole('definition').first()).toHaveText(largeLog.path!);
       await page.keyboard.press('Tab');
       await expect(close).toBeFocused();
       await page.keyboard.press('Tab');

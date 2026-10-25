@@ -40,7 +40,7 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
       case 'lhr1':
         return 'London (Europe)';
       default:
-        return reg || 'Global Edge';
+        return reg || 'Not provided';
     }
   };
 
@@ -95,7 +95,7 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
             <div>
               <span className="text-[10px] text-neutral-400 block uppercase">Timestamp</span>
               <span className="text-neutral-800 dark:text-neutral-200 text-[11px]">
-                {new Date(log.timestamp).toLocaleTimeString()} ({log.timestamp})
+                {new Date(log.timestamp).toLocaleString()} ({log.timestamp})
               </span>
             </div>
 
@@ -134,6 +134,27 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
               </span>
             </div>
           </div>
+
+          <section aria-label="Request context">
+            <h4 className="text-[10px] uppercase text-neutral-400 mb-1 font-semibold">Request Context</h4>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60">
+              {[
+                ['Route', log.path],
+                ['Host', log.host],
+                ['Request ID', log.requestId],
+                ['Environment', log.environment],
+                ['Deployment ID', typeof log.payload?.deploymentId === 'string' ? log.payload.deploymentId : undefined],
+                ['Function', typeof log.payload?.functionName === 'string' ? log.payload.functionName : undefined],
+              ].map(([label, value]) => (
+                <div key={label} className={`min-w-0 ${label === 'Route' ? 'sm:col-span-2' : ''}`}>
+                  <dt className="text-[10px] text-neutral-400 uppercase">{label}</dt>
+                  <dd className="text-neutral-800 dark:text-neutral-200 text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {value || 'Not provided'}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
 
           {/* Full Message */}
           <div>

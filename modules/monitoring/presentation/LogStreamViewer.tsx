@@ -101,6 +101,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
         l.message.toLowerCase().includes(q) ||
         (l.method && l.method.toLowerCase().includes(q)) ||
         (l.path && l.path.toLowerCase().includes(q)) ||
+        (l.host && l.host.toLowerCase().includes(q)) ||
         (l.statusCode && l.statusCode.toString().includes(q)) ||
         (l.region && l.region.toLowerCase().includes(q)) ||
         (l.requestId && l.requestId.toLowerCase().includes(q))
@@ -130,7 +131,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
 
   const handleCopyAll = async () => {
     const text = filteredLogs
-      .map(l => `[${new Date(l.timestamp).toISOString()}] [${l.level.toUpperCase()}] [${l.applicationName}] ${l.method ? `[${l.method}] ` : ''}${l.message}`)
+      .map(l => `[${new Date(l.timestamp).toISOString()}] [${l.level.toUpperCase()}] [${l.applicationName}] ${l.method ? `[${l.method}] ` : ''}${l.path ? `[${l.path}] ` : ''}${l.message}`)
       .join('\n');
     try {
       await getDesktop().copyText(text);
@@ -442,15 +443,22 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
                 )}
 
                 {/* Message Body */}
-                <span className={`flex-1 break-all pt-0.5 ${
+                <div className={`min-w-0 flex-1 break-all pt-0.5 ${
                   isError
                     ? 'text-rose-600 dark:text-rose-300 font-medium'
                     : isWarn
                     ? 'text-amber-700 dark:text-amber-300'
                     : 'text-neutral-800 dark:text-neutral-200'
                 }`}>
-                  {log.message}
-                </span>
+                  {log.path ? (
+                    <span title={`Request route: ${log.path}`} className="block mb-0.5 font-semibold text-indigo-600 dark:text-indigo-300 [overflow-wrap:anywhere]">
+                      {log.path}
+                    </span>
+                  ) : (log.method || ['runtime', 'serverless', 'edge', 'probe'].includes(log.source)) && (
+                    <span className="block mb-0.5 text-[10px] font-normal text-neutral-400">Route not provided</span>
+                  )}
+                  <span>{log.message}</span>
+                </div>
 
                 {/* Hover inspect button */}
                 <button
