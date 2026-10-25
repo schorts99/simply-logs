@@ -9,7 +9,10 @@ export class BrowserNotificationGateway {
   static getPermission(): NotificationPermission { return this.isSupported() ? 'granted' : 'denied'; }
   static async requestPermission(): Promise<NotificationPermission> { return this.getPermission(); }
   static async showNativeNotification(title: string, options?: { body?: string }): Promise<boolean> {
-    return await window.simplyLogs?.notify(title, options?.body || title) ?? false;
+    if (!this.isSupported()) throw new Error('Native notifications are unavailable in UI preview. Open the Simply Logs desktop app.');
+    const accepted = await window.simplyLogs!.notify(title, options?.body || title);
+    if (!accepted) throw new Error('The operating system did not accept the desktop notification.');
+    return true;
   }
   static loadSettings(): NotificationSettings {
     try {

@@ -72,7 +72,7 @@ export class NotificationService {
       if (!incident || now - incident.lastSeen < this.settings.cooldownSeconds * 1000) return;
       this.activeIncidents.delete(key);
       if (this.settings.notifyOnResolved) {
-        this.dispatch({
+        void this.dispatch({
           title: `Recovered: ${log.applicationName}`,
           body: `${log.monitorKind === 'health' ? 'A fresh health check succeeded' : 'A ready deployment was observed'} after the recovery window.`,
           type: 'resolved', applicationId: log.applicationId, applicationName: log.applicationName,
@@ -92,17 +92,17 @@ export class NotificationService {
       status: 'active', firstSeen: now, lastSeen: now, errorCount: 1, lastNotifiedAt: now,
       lastErrorMessage: log.message,
     });
-    this.dispatch({
+    void this.dispatch({
       title: `${log.monitorKind === 'health' ? 'Health check failed' : 'Deployment failed'}: ${log.applicationName}`,
       body: log.message.slice(0, 180), type: 'error',
       applicationId: log.applicationId, applicationName: log.applicationName, providerType: log.providerType,
     });
   }
 
-  private dispatch(params: {
+  private async dispatch(params: {
     title: string; body: string; type: NotificationType; applicationId?: string;
     applicationName?: string; providerType?: 'vercel' | 'netlify'; suppressedRepeats?: number;
-  }): void {
+  }): Promise<boolean> {
     const item: NotificationItem = { ...params, id: crypto.randomUUID(), timestamp: this.now(), read: false };
     this.notifications = [item, ...this.notifications].slice(0, 80);
     this.notify();
@@ -112,12 +112,27 @@ export class NotificationService {
       else if (params.type === 'resolved') this.audio.playPurr();
     }
     if (this.settings.browserPushEnabled) {
-      void this.gateway.showNativeNotification(item.title, { body: item.body }).catch(() => {});
+      try {
+        if (!await this.gateway.showNativeNotification(item.title, { body: item.body })) {
+          throw new Error('The operating system did not accept the desktop notification.');
+        }
+        return true;
+      } catch (error) {
+        const failure: NotificationItem = {
+          id: crypto.randomUUID(), timestamp: this.now(), read: false, type: 'warning',
+          title: 'Desktop notification failed',
+          body: error instanceof Error ? error.message : 'Desktop notification delivery failed.',
+        };
+        this.notifications = [failure, ...this.notifications].slice(0, 80);
+        this.notify();
+        this.toastListeners.forEach(listener => listener(failure));
+      }
     }
+    return false;
   }
 
-  sendTestNotification(): void {
-    this.dispatch({ title: 'Simply Logs', body: 'Your cat is on watch. Notification delivery is working.', type: 'info' });
+  sendTestNotification(): Promise<boolean> {
+    return this.dispatch({ title: 'Simply Logs', body: 'Your cat is on watch. This is a test notification.', type: 'info' });
   }
   markAllAsRead(): void {
     this.notifications = this.notifications.map(item => ({ ...item, read: true }));

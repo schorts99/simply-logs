@@ -69,6 +69,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "identity": "-",
       "target": ["dmg", "zip"]
     },
     "win": {

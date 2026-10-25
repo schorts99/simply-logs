@@ -26,7 +26,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
   const [settings, setSettings] = useState<NotificationSettings>(() => notificationService.getSettings());
   const [history, setHistory] = useState<NotificationItem[]>([]);
   const [browserPermission, setBrowserPermission] = useState<NotificationPermission>('default');
-  const [testSent, setTestSent] = useState(false);
+  const [testState, setTestState] = useState<'idle' | 'sending' | 'sent' | 'failed' | 'in-app'>('idle');
   useDialog(isOpen, onClose);
 
   useEffect(() => {
@@ -78,10 +78,10 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
     notificationService.updateSettings({ cooldownSeconds: sec });
   };
 
-  const handleSendTest = () => {
-    notificationService.sendTestNotification();
-    setTestSent(true);
-    setTimeout(() => setTestSent(false), 2000);
+  const handleSendTest = async () => {
+    setTestState('sending');
+    const accepted = await notificationService.sendTestNotification();
+    setTestState(accepted ? 'sent' : settings.browserPushEnabled ? 'failed' : 'in-app');
   };
 
   const handleClearHistory = () => {
@@ -164,6 +164,9 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                     </span>
                     <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                       Show native system banners while Simply Logs is open
+                    </p>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      Allow notifications in system settings. On macOS, use a signed app and check Focus settings.
                     </p>
                   </div>
 
@@ -280,10 +283,11 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
               <div className="flex items-center justify-between pt-1">
                 <button
                   onClick={handleSendTest}
+                  disabled={testState === 'sending'}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-medium transition-colors"
                 >
-                  {testSent ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>{testSent ? 'Test Alert Dispatched!' : 'Send Test Notification'}</span>
+                  {testState === 'sent' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>{testState === 'sending' ? 'Sending...' : testState === 'sent' ? 'Accepted by system' : 'Send Test Notification'}</span>
                 </button>
 
                 {history.length > 0 && (
@@ -296,6 +300,9 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   </button>
                 )}
               </div>
+              {testState === 'failed' && <p role="alert" className="text-amber-600 dark:text-amber-400">Desktop notification failed. See Recent Notifications for details.</p>}
+              {testState === 'in-app' && <p role="status">In-app test sent. Enable desktop notifications to test a system banner.</p>}
+              {testState === 'sent' && <p role="status">The system accepted the request. Notification permissions and Focus settings still control whether a banner appears.</p>}
             </div>
           )}
 

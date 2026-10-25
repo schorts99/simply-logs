@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile } from 'node:fs/promises';
 import type { Provider, ProviderTarget } from '../shared/desktop';
 import { CredentialStore } from './credentials';
+import { showNotification } from './notifications';
 import { discover, deployments, events, probe, runtimeDeployment, runtimeHistory, streamRuntimeLogs } from './monitoring';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -220,8 +221,8 @@ else {
       await writeFile(result.filePath, value, { mode: 0o600 });
       return true;
     });
-    handle('desktop:notify', (title, body) => {
-      if (!Notification.isSupported()) return false;
+    handle('desktop:notify', async (title, body) => {
+      if (!Notification.isSupported()) throw new Error('Native desktop notifications are not supported on this system.');
       const notification = new Notification({
         title: text(title, 256), body: text(body, 1024), silent: true,
       });
@@ -232,8 +233,15 @@ else {
         window?.show();
         window?.focus();
       });
-      notification.show();
-      return true;
+      try {
+        return await showNotification(notification);
+      } catch (error) {
+        notifications.delete(notification);
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(process.platform === 'darwin'
+          ? `${message} Use a signed Simply Logs.app and allow notifications in System Settings > Notifications. Check Focus settings if banners are hidden.`
+          : message);
+      }
     });
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ label: 'Simply Logs', submenu: [{ role: 'about' as const }, { type: 'separator' as const }, { role: 'quit' as const }] }] : []),

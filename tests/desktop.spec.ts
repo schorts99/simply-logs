@@ -123,6 +123,24 @@ test('desktop onboarding, real-data boundaries, filtering, pause and shared mute
     await page.getByTitle('Notifications and alert settings').click();
     const notifications = page.getByRole('dialog', { name: 'Notification settings' });
     await expect(notifications.getByLabel('Sound chimes')).not.toBeChecked();
+    await notifications.getByRole('button', { name: 'Send Test Notification', exact: true }).click();
+    await expect(notifications.getByRole('button', { name: 'Accepted by system', exact: true })).toBeVisible();
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('desktop:notify');
+      ipcMain.handle('desktop:notify', () => { throw new Error('macOS notification permission denied'); });
+    });
+    await notifications.getByRole('button', { name: 'Accepted by system', exact: true }).click();
+    await expect(notifications.getByRole('alert')).toContainText('Desktop notification failed');
+    await expect(notifications.getByText('Desktop notification failed', { exact: true })).toBeVisible();
+    await expect(notifications.getByText(/macOS notification permission denied/)).toBeVisible();
+    await notifications.getByRole('button', { name: 'Enabled', exact: true }).click();
+    await notifications.getByRole('button', { name: 'Send Test Notification', exact: true }).click();
+    await expect(notifications.getByRole('status')).toContainText('In-app test sent');
+    await notifications.getByRole('button', { name: 'Disabled', exact: true }).click();
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('desktop:notify');
+      ipcMain.handle('desktop:notify', () => true);
+    });
     await notifications.getByLabel('Sound chimes').check();
     await page.keyboard.press('Escape');
     await expect(page.getByTitle('Mute all sounds')).toBeVisible();

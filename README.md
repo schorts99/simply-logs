@@ -42,6 +42,14 @@ Log rows show an HTTP method badge when the provider supplies one, so an `OPTION
 
 Monitoring and desktop alerts run only while the app is open. Closing the last window quits on Windows/Linux; macOS follows its native application lifecycle. Monitoring is suspended when no window exists.
 
+### macOS desktop notifications
+
+Run the packaged **Simply Logs.app**, enable **Desktop notifications** in alert settings, then send a test notification. Allow the macOS permission prompt and enable **System Settings > Notifications > Simply Logs > Allow notifications**, with Banners or Alerts selected. Focus/Do Not Disturb can hide banners even when the system accepts a request.
+
+Electron's macOS notification API requires a signed app bundle. Local Mac packages use ad-hoc signing by default so the bundle has a valid signature and its own `app.simplylogs.desktop` identity. Ad-hoc signing is for local use, not a substitute for Developer ID signing and notarization. An older unsigned package must be rebuilt and replaced; reloading its window does not repair its signature. `npm run dev` uses Electron's development bundle, so its notification identity/permissions may appear as Electron instead of Simply Logs.
+
+The test action waits for Electron's native result instead of assuming `show()` succeeded. Rejections appear in-app and in Recent Notifications with the OS error. "Accepted by system" confirms request acceptance, not that macOS displayed a banner. When desktop notifications are disabled, the test explicitly reports an in-app-only alert.
+
 ## Credentials and privacy
 
 Tokens stay in the Electron main process. When the OS keychain is available, Electron `safeStorage` encrypts them before they are written to the application's private data directory. Linux `basic_text` storage is explicitly rejected. If no secure keychain is available, tokens remain **session-only**, the app displays a warning, and you must reconnect after restarting. On Linux, enable a Secret Service/keyring or supported KWallet backend for persistent credentials.
@@ -73,7 +81,7 @@ npm run dist         # create installers for the current OS under release/
 
 Build native installers on their corresponding operating systems. To request both macOS architectures, run `npm run dist -- --mac --arm64 --x64` on macOS. The included GitHub Actions workflow checks all three platforms, runs desktop smoke tests, and uploads installer artifacts. It does not publish releases or upload application data.
 
-Local/CI artifacts are **unsigned by default**. Configure Electron Builder code signing and Apple notarization with your own developer certificates before public distribution; unsigned builds may be blocked or warned about by Windows/macOS. Signing credentials must only be supplied as protected CI secrets, never committed.
+Windows artifacts are **unsigned by default**; macOS artifacts are **ad-hoc signed for local use**. Configure Electron Builder code signing and Apple notarization with your own developer certificates before public distribution; local builds may still be blocked or warned about by Windows/macOS. Override the local Mac signing identity when distributing, for example `npm run dist -- --mac --config.mac.identity="Developer ID Application: Your Name (TEAMID)"`. Signing credentials must only be supplied as protected CI secrets, never committed.
 
 Linux requires the standard Electron/Chromium desktop libraries, including NSS, GTK, and ALSA. AppImage may additionally require FUSE; use its `--appimage-extract-and-run` option when FUSE is unavailable, or install the `.deb` instead.
 
