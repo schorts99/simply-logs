@@ -99,6 +99,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
       const q = searchQuery.toLowerCase();
       result = result.filter(l => 
         l.message.toLowerCase().includes(q) ||
+        (l.method && l.method.toLowerCase().includes(q)) ||
         (l.path && l.path.toLowerCase().includes(q)) ||
         (l.statusCode && l.statusCode.toString().includes(q)) ||
         (l.region && l.region.toLowerCase().includes(q)) ||
@@ -129,7 +130,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
 
   const handleCopyAll = async () => {
     const text = filteredLogs
-      .map(l => `[${new Date(l.timestamp).toISOString()}] [${l.level.toUpperCase()}] [${l.applicationName}] ${l.message}`)
+      .map(l => `[${new Date(l.timestamp).toISOString()}] [${l.level.toUpperCase()}] [${l.applicationName}] ${l.method ? `[${l.method}] ` : ''}${l.message}`)
       .join('\n');
     try {
       await getDesktop().copyText(text);
@@ -273,7 +274,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-neutral-400" />
           <input
             type="text"
-            placeholder="Search logs (e.g. /checkout, 500, iad1, error)..."
+            placeholder="Search logs (e.g. OPTIONS, /checkout, 500)..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-7 py-1.5 text-xs font-mono rounded-lg border border-neutral-300 dark:border-neutral-700/80 bg-neutral-50/50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
@@ -412,6 +413,12 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
                 {log.isRealTelemetry && (
                   <span className="shrink-0 text-[8px] font-mono px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-500/30">
                     LIVE
+                  </span>
+                )}
+
+                {log.method && (
+                  <span title={`HTTP method: ${log.method}`} className="shrink-0 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-500/20">
+                    {log.method}
                   </span>
                 )}
 

@@ -12,6 +12,7 @@ interface LogDetailModalProps {
 export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) => {
   const [copied, setCopied] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const backdropPointerDown = React.useRef(false);
   useDialog(Boolean(log), onClose);
   React.useEffect(() => { setCopied(false); setError(null); }, [log?.id]);
 
@@ -44,13 +45,16 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Log details" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div role="dialog" aria-modal="true" aria-label="Log details" tabIndex={-1}
+      onPointerDown={event => { backdropPointerDown.current = event.target === event.currentTarget; }}
+      onClick={event => { if (event.target === event.currentTarget && backdropPointerDown.current) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+      <div className="w-full min-w-0 max-w-2xl bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="px-5 py-3.5 border-b border-neutral-200 dark:border-neutral-800 flex shrink-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase ${
+              className={`shrink-0 text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase ${
                 log.level === 'error'
                   ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30'
                   : log.level === 'warn'
@@ -60,15 +64,15 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
             >
               {log.level}
             </span>
-            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 font-mono">
+            <h3 title={`Log Details (${log.id})`} className="min-w-0 truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100 font-mono">
               Log Details ({log.id})
             </h3>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={handleCopyJson}
-              className="text-xs px-2.5 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 flex items-center gap-1 transition-colors"
+              className="shrink-0 whitespace-nowrap text-xs px-2.5 py-1 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 flex items-center gap-1 transition-colors"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copied ? 'Copied JSON' : 'Copy Log JSON'}</span>
@@ -76,7 +80,7 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
             <button
               aria-label="Close log details"
               onClick={onClose}
-              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 p-1 rounded-lg"
+              className="shrink-0 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 p-1 rounded-lg"
             >
               <X className="w-4 h-4" />
             </button>
@@ -84,7 +88,7 @@ export const LogDetailModal: React.FC<LogDetailModalProps> = ({ log, onClose }) 
         </div>
 
         {/* Body */}
-        <div className="p-5 overflow-y-auto space-y-4 font-mono text-xs">
+        <div className="min-h-0 p-5 overflow-y-auto [overflow-wrap:anywhere] space-y-4 font-mono text-xs">
           {error && <p role="alert" className="text-rose-500">{error}</p>}
           {/* Metadata Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60">

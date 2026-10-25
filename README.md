@@ -34,6 +34,8 @@ Netlify logging uses the analytics/history and authenticated WebSocket services 
 
 Projects and environment selection scope the log viewer, counters, exports, and manual actions. Background monitoring watches all applications in the selected project. The newest 1,000 entries across projects, including runtime logs, are saved locally and restored after switching projects or restarting. Restoring history does not replay alerts. Clearing logs removes the selected project's saved history and ignores older in-flight backfill; a subsequent app restart can fetch recent provider history again. Deleting an application or project removes its saved logs. Storage failures are reported in the app; export JSON using the toolbar to keep a longer-term record.
 
+Log rows show an HTTP method badge when the provider supplies one, so an `OPTIONS` preflight is distinguishable from the actual request. Methods are searchable (case-insensitive) and included in copied log text and JSON exports; logs without a method are not assigned one.
+
 **Pause** stops polling and ignores in-flight observations. Resume collects fresh state. Space toggles monitoring unless focus is in a control or dialog. Alerts are deduplicated by application and monitor type; recovery requires a fresh healthy observation after the configured recovery window, not silence. The footer sound switch and alert settings share one setting, including cat sounds.
 
 Monitoring and desktop alerts run only while the app is open. Closing the last window quits on Windows/Linux; macOS follows its native application lifecycle. Monitoring is suspended when no window exists.

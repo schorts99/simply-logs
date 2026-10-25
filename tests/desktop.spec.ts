@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { application } from './fixtures';
+import { application, entry } from './fixtures';
 
 test('desktop onboarding, real-data boundaries, filtering, pause and shared mute', async ({}, info) => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-desktop-'));
@@ -416,6 +416,186 @@ for (const provider of ['vercel', 'netlify'] as const) {
     }
   });
 }
+
+test('HTTP method badges distinguish matching requests and remain available in search, copies and exports', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-http-methods-'));
+  const app = await electron.launch({
+    args: [
+      '.', `--user-data-dir=${profile}`, '--disable-gpu',
+      ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
+    env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+  });
+  try {
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('desktop:copy');
+      ipcMain.handle('desktop:copy', (_event, text: string) => { (globalThis as any).__methodCopy = text; });
+      ipcMain.removeHandler('desktop:export');
+      ipcMain.handle('desktop:export', (_event, json: string) => { (globalThis as any).__methodExport = json; return true; });
+    });
+    const page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Create your first project' })).toBeVisible();
+    const savedApp = application({ name: 'Request demo', deploymentUrl: undefined });
+    const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'] as const;
+    const savedLogs = [
+      ...methods.map(method => entry({
+        id: `request-${method}`, applicationName: savedApp.name, source: 'serverless', method, path: '/api/orders',
+        statusCode: method === 'POST' ? 201 : 204, latencyMs: 24, region: 'iad1', message: 'Same request output',
+        observation: undefined, monitorKind: undefined,
+      })),
+      entry({
+        id: 'no-method', applicationName: savedApp.name, source: 'build', message: 'Deployment ready',
+        observation: undefined, monitorKind: undefined,
+      }),
+    ];
+    await page.evaluate(({ savedApp, savedLogs }) => {
+      localStorage.setItem('simply_logs_projects_v1', JSON.stringify([{
+        id: savedApp.projectId, name: 'Requests project', description: '', color: '#6366f1', tags: [], createdAt: 1000,
+      }]));
+      localStorage.setItem('simply_logs_apps_v1', JSON.stringify([savedApp]));
+      localStorage.setItem('simply_logs_history_v1', JSON.stringify(savedLogs));
+    }, { savedApp, savedLogs });
+    await page.reload();
+    const workspace = page.getByRole('main');
+    const requestRows = workspace.getByText('Same request output', { exact: true }).locator('..');
+    await expect(requestRows).toHaveCount(methods.length);
+    for (const size of [{ width: 1280, height: 820 }, { width: 920, height: 620 }]) {
+      await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), size);
+      for (const method of methods) {
+        const row = requestRows.filter({ has: page.getByTitle(`HTTP method: ${method}`, { exact: true }) });
+        await expect(row).toHaveCount(1);
+        await row.scrollIntoViewIfNeeded();
+        await expect(row.getByTitle(`HTTP method: ${method}`, { exact: true })).toHaveText(method);
+        await expect(row.getByTitle(`HTTP method: ${method}`, { exact: true })).toBeInViewport({ ratio: 1 });
+        await expect(row.getByTitle('Inspect log details')).toBeInViewport({ ratio: 1 });
+      }
+    }
+    const noMethod = workspace.getByText('Deployment ready', { exact: true }).locator('..');
+    await expect(noMethod.locator('[title^="HTTP method:"]')).toHaveCount(0);
+    const search = page.getByPlaceholder('Search logs', { exact: false });
+    await search.fill('oPtIoNs');
+    await expect(requestRows).toHaveCount(1);
+    await expect(workspace.getByTitle('HTTP method: OPTIONS', { exact: true })).toBeVisible();
+    await expect(noMethod).toHaveCount(0);
+    await page.getByTitle('Copy filtered logs to clipboard', { exact: true }).click();
+    expect(await app.evaluate(() => (globalThis as any).__methodCopy)).toContain('[OPTIONS] Same request output');
+    await page.getByTitle('Export logs as JSON file', { exact: true }).click();
+    const exported = JSON.parse(await app.evaluate(() => (globalThis as any).__methodExport as string));
+    expect(exported).toHaveLength(1);
+    expect(exported[0].method).toBe('OPTIONS');
+    expect(exported[0].path).toBe('/api/orders');
+    await search.fill('post');
+    await expect(requestRows).toHaveCount(1);
+    await workspace.getByTitle('Inspect log details').click();
+    await expect(page.getByRole('dialog', { name: 'Log details' })).toContainText('POST (201)');
+    await page.keyboard.press('Escape');
+    await search.fill('/api/orders');
+    await expect(requestRows).toHaveCount(methods.length);
+    await search.fill('');
+    await expect(requestRows).toHaveCount(methods.length);
+    await page.getByTitle('Copy filtered logs to clipboard', { exact: true }).click();
+    const copied = await app.evaluate(() => (globalThis as any).__methodCopy as string);
+    for (const method of methods) expect(copied).toContain(`[${method}] Same request output`);
+    expect(copied.split('\n').find(line => line.includes('Deployment ready'))).toMatch(/\[Request demo\] Deployment ready$/);
+    await page.getByTitle('Export logs as JSON file', { exact: true }).click();
+    const allExported = JSON.parse(await app.evaluate(() => (globalThis as any).__methodExport as string));
+    expect(allExported.map((log: { method?: string }) => log.method).filter(Boolean)).toEqual(methods);
+    expect(allExported.find((log: { id: string }) => log.id === 'no-method')).not.toHaveProperty('method');
+  } finally {
+    await app.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('large log details keep header controls visible, copy full JSON and dismiss only from the backdrop or close controls', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-log-details-'));
+  const app = await electron.launch({
+    args: [
+      '.', `--user-data-dir=${profile}`, '--disable-gpu',
+      ...(process.env.SIMPLY_LOGS_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
+    ],
+    env: { ...process.env, SIMPLY_LOGS_DEV_URL: '' },
+  });
+  try {
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('desktop:copy');
+      ipcMain.handle('desktop:copy', (_event, json: string) => { (globalThis as any).__copiedLogJson = json; });
+    });
+    const page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Create your first project' })).toBeVisible();
+    const savedApp = application({ name: `Application-${'a'.repeat(300)}`, deploymentUrl: undefined });
+    const largeLog = entry({
+      id: `request-${'b'.repeat(400)}`, applicationName: savedApp.name, level: 'error', source: 'serverless',
+      message: ['Large log fixture', ...Array.from({ length: 150 }, (_, i) => `Message line ${i}: ${'details '.repeat(20)}`)].join('\n'),
+      stackTrace: ['Error: large log fixture', ...Array.from({ length: 80 }, (_, i) => `  at handler (/functions/${'path'.repeat(40)}:${i})`)].join('\n'),
+      payload: { requestId: 'full-request-id', data: 'x'.repeat(3000), lines: Array.from({ length: 50 }, (_, i) => `Payload line ${i}`) },
+      observation: undefined, monitorKind: undefined,
+    });
+    await page.evaluate(({ savedApp, largeLog }) => {
+      localStorage.setItem('simply_logs_projects_v1', JSON.stringify([{
+        id: savedApp.projectId, name: 'Log details project', description: '', color: '#6366f1', tags: [], createdAt: 1000,
+      }]));
+      localStorage.setItem('simply_logs_apps_v1', JSON.stringify([savedApp]));
+      localStorage.setItem('simply_logs_history_v1', JSON.stringify([largeLog]));
+    }, { savedApp, largeLog });
+    await page.reload();
+    const logRow = page.getByText(/^Large log fixture/);
+    const dialog = page.getByRole('dialog', { name: 'Log details' });
+    const panel = dialog.locator(':scope > div');
+    const header = panel.locator(':scope > div').first();
+    const body = panel.locator(':scope > div').nth(1);
+
+    for (const size of [{ width: 1280, height: 820 }, { width: 920, height: 620 }]) {
+      await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), size);
+      await logRow.click();
+      const copy = dialog.getByRole('button', { name: 'Copy Log JSON', exact: true });
+      const close = dialog.getByRole('button', { name: 'Close log details', exact: true });
+      await expect(copy).toBeFocused();
+      const bounds = await panel.boundingBox();
+      const copyBounds = await copy.boundingBox();
+      const closeBounds = await close.boundingBox();
+      expect(copyBounds!.height).toBeLessThanOrEqual(36);
+      expect(copyBounds!.width).toBeGreaterThan(100);
+      expect(copyBounds!.x).toBeGreaterThanOrEqual(bounds!.x);
+      expect(copyBounds!.x + copyBounds!.width).toBeLessThanOrEqual(closeBounds!.x);
+      expect(closeBounds!.x + closeBounds!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
+      expect(copyBounds!.y).toBeGreaterThanOrEqual(bounds!.y);
+      expect(copyBounds!.y + copyBounds!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height);
+      expect(await header.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await body.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await page.keyboard.press('Tab');
+      await expect(close).toBeFocused();
+      await page.keyboard.press('Tab');
+      await expect(copy).toBeFocused();
+      await copy.click();
+      await expect(dialog.getByRole('button', { name: 'Copied JSON', exact: true })).toBeVisible();
+      expect(JSON.parse(await app.evaluate(() => (globalThis as any).__copiedLogJson as string))).toEqual(JSON.parse(JSON.stringify(largeLog)));
+      await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      await expect(close).toBeInViewport();
+      expect((await close.boundingBox())!.y).toBe(closeBounds!.y);
+      await dialog.getByText('Log Message', { exact: true }).click();
+      await expect(dialog).toBeVisible();
+      const contentBounds = await body.boundingBox();
+      await page.mouse.move(contentBounds!.x + 20, contentBounds!.y + 20);
+      await page.mouse.down();
+      await page.mouse.move(8, 8);
+      await page.mouse.up();
+      await expect(dialog).toBeVisible();
+      await dialog.click({ position: { x: 8, y: 8 } });
+      await expect(dialog).toHaveCount(0);
+    }
+    await logRow.click();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await logRow.click();
+    await dialog.getByRole('button', { name: 'Close log details', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 test('Netlify onboarding loads Function/Edge history, streams live logs and restores them after restart', async () => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-netlify-'));
