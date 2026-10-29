@@ -164,7 +164,7 @@ test('incident recovery requires fresh success, not silence or unknown telemetry
     getPermission: () => 'granted' as const,
     requestPermission: async () => 'granted' as const,
     showNativeNotification: async () => true,
-    isSupported: () => true,
+    isSupported: () => true, onNativeClick: () => () => {},
   };
   const service = new NotificationService(gateway, { playErrorAlert: () => { sounds++; }, playPurr: () => { sounds++; } }, () => now);
   let items: NotificationItem[] = [];
@@ -191,7 +191,7 @@ test('health success cannot resolve a deployment incident', () => {
     ...BrowserNotificationGateway, loadSettings: () => ({ ...DEFAULT_NOTIFICATION_SETTINGS, soundAlerts: false, browserPushEnabled: false }),
     loadHistory: () => [], saveHistory() {}, saveSettings() {},
     getPermission: () => 'granted' as const, requestPermission: async () => 'granted' as const,
-    showNativeNotification: async () => true, isSupported: () => true,
+    showNativeNotification: async () => true, isSupported: () => true, onNativeClick: () => () => {},
   };
   let now = 0;
   const service = new NotificationService(gateway, undefined, () => now);

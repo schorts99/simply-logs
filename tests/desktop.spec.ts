@@ -1,9 +1,19 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { application, entry } from './fixtures';
 import type { Project } from '../modules/projects/domain/Project';
+
+// Tests replace IPC handlers right after launch. Waiting for readiness guarantees the app has registered its own
+// handlers first; otherwise its startup fails with "Attempted to register a second handler" and it quits.
+const electron = {
+  async launch(...args: Parameters<typeof _electron.launch>) {
+    const app = await _electron.launch(...args);
+    await app.evaluate(({ app: main }) => main.whenReady());
+    return app;
+  },
+};
 
 test('desktop onboarding, real-data boundaries, filtering, pause and shared mute', async ({}, info) => {
   const profile = await mkdtemp(path.join(tmpdir(), 'simply-logs-desktop-'));

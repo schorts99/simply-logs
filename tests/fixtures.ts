@@ -37,6 +37,7 @@ export function desktop(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     saveCredential: async () => ({ persistent: true }),
     deleteCredential: async () => {},
     notify: async () => true,
+    onNotificationClick: () => () => {},
     copyText: async () => {},
     exportLogs: async () => true,
     ...overrides,

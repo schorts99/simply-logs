@@ -98,7 +98,8 @@ export interface DesktopBridge {
   probe(url: string): Promise<ProbeResult>;
   saveCredential(id: string, token: string): Promise<{ persistent: boolean }>;
   deleteCredential(id: string): Promise<void>;
-  notify(title: string, body: string): Promise<boolean>;
+  notify(title: string, body: string, id?: string): Promise<boolean>;
+  onNotificationClick(listener: (id: string) => void): () => void;
   copyText(text: string): Promise<void>;
   exportLogs(json: string): Promise<boolean>;
 }

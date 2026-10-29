@@ -38,7 +38,15 @@ To update a project's name, description, color or tags, use **Edit current proje
 
 Log rows show the request route above the message and an HTTP method badge when the provider supplies them, so an `OPTIONS` preflight is distinguishable from the actual request. Routes, methods and hosts are searchable (case-insensitive); routes and methods are included in copied log text and JSON exports. Open a log to inspect its route, host, request ID, environment, deployment ID and function alongside status, latency and region. Missing context is labeled **Not provided** rather than inferred from the application's URL; build logs need not belong to a request.
 
-**Pause** stops polling and ignores in-flight observations. Resume collects fresh state. Space toggles monitoring unless focus is in a control or dialog. Alerts are deduplicated by application and monitor type; recovery requires a fresh healthy observation after the configured recovery window, not silence. The footer sound switch and alert settings share one setting, including cat sounds.
+**Pause** stops polling and ignores in-flight observations. Resume collects fresh state. Space toggles monitoring unless focus is in a control or dialog. Alerts are deduplicated by application and monitor type; recovery requires a fresh healthy observation after the configured recovery window, not silence.
+
+### Alerts
+
+- **Health checks** alert after a configurable number of consecutive failures (1, 2, 3 or 5; default 2), so a single failed 15-second check does not page you. A success before the threshold resets the streak. **Failed deployments** alert immediately.
+- **Runtime error spikes** (provider account connections only) alert when live runtime, Function or Edge logs show 5xx responses or error-level output at or above a per-minute rate (3, 5, 10 or 25; default 5). Isolated errors don't alert. Loaded history never counts. The spike recovers when a request succeeds after the recovery window.
+- Alerts show the application's environment and provider. Recovery alerts report how long the incident lasted and how many failures it absorbed.
+- Click a toast, a Recent Notifications entry or a desktop banner to focus the window and open that application's logs, switching projects if needed. Up to three toasts stack; failures stay on screen longer.
+- **Mute** an application for an hour from its alert toast. Muted applications are listed in alert settings with their remaining time and can be unmuted there. Muting resets that application's open incidents; if it is still failing when the mute ends, it alerts again. The footer sound switch and alert settings share one setting, including cat sounds.
 
 Monitoring and desktop alerts run only while the app is open. Closing the last window quits on Windows/Linux; macOS follows its native application lifecycle. Monitoring is suspended when no window exists.
 

@@ -221,7 +221,7 @@ else {
       await writeFile(result.filePath, value, { mode: 0o600 });
       return true;
     });
-    handle('desktop:notify', async (title, body) => {
+    handle('desktop:notify', async (title, body, id) => {
       if (!Notification.isSupported()) throw new Error('Native desktop notifications are not supported on this system.');
       const notification = new Notification({
         title: text(title, 256), body: text(body, 1024), silent: true,
@@ -232,6 +232,7 @@ else {
         if (window?.isMinimized()) window.restore();
         window?.show();
         window?.focus();
+        if (typeof id === 'string' && /^[\w-]{1,64}$/.test(id)) window?.webContents.send('desktop:notification-click', id);
       });
       try {
         return await showNotification(notification);

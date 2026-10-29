@@ -41,7 +41,12 @@ const bridge: DesktopBridge = {
   probe: url => ipcRenderer.invoke('monitor:probe', url),
   saveCredential: (id, token) => ipcRenderer.invoke('credentials:save', id, token),
   deleteCredential: id => ipcRenderer.invoke('credentials:delete', id),
-  notify: (title, body) => ipcRenderer.invoke('desktop:notify', title, body),
+  notify: (title, body, id) => ipcRenderer.invoke('desktop:notify', title, body, id),
+  onNotificationClick: listener => {
+    const handler = (_event: IpcRendererEvent, id: unknown) => { if (typeof id === 'string') listener(id); };
+    ipcRenderer.on('desktop:notification-click', handler);
+    return () => { ipcRenderer.removeListener('desktop:notification-click', handler); };
+  },
   copyText: text => ipcRenderer.invoke('desktop:copy', text),
   exportLogs: json => ipcRenderer.invoke('desktop:export', json),
 };

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeProvider } from '../modules/desktop/application/ThemeContext';
 import type { Project, Application, Environment } from '../modules/projects/domain/Project';
 import type { LogEntry } from '../modules/monitoring/domain/LogEntry';
@@ -8,6 +8,7 @@ import { CatBreedStorage } from '../modules/companion/infrastructure/CatBreedSto
 import { companionService } from '../modules/companion/application/CompanionService';
 import { notificationService } from '../modules/notifications/application/NotificationService';
 import type { CatBreed } from '../modules/companion/domain/CatTypes';
+import type { NotificationItem } from '../modules/notifications/domain/NotificationTypes';
 import { getDesktop } from '../modules/desktop/infrastructure/DesktopBridge';
 import { WindowChrome } from '../modules/desktop/presentation/WindowChrome';
 import { StatusBar } from '../modules/desktop/presentation/StatusBar';
@@ -51,6 +52,7 @@ function MainApp() {
   const [soundEnabled, setSoundEnabled] = useState(notificationService.getSettings().soundAlerts);
   const [catBreed, setCatBreed] = useState<CatBreed>(() => CatBreedStorage.getBreed());
   const [catHappyUntil, setCatHappyUntil] = useState(0);
+  const pendingAppId = useRef<string | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -109,10 +111,27 @@ function MainApp() {
       setApplications(items);
       notificationService.syncApplications(items.map(app => app.id));
       logStreamService.syncApplications(items);
+      if (pendingAppId.current && items.some(app => app.id === pendingAppId.current)) setSelectedAppId(pendingAppId.current);
+      pendingAppId.current = null;
     }).catch(cause => { if (!canceled) setError(message(cause)); })
       .finally(() => { if (!canceled) setLoadingApps(false); });
     return () => { canceled = true; };
   }, [projectId]);
+
+  const openAlertApplication = useCallback(async (item: NotificationItem) => {
+    if (!item.applicationId) return;
+    notificationService.markAsRead(item.id);
+    try {
+      const app = (await projectRepository.getApplications()).find(candidate => candidate.id === item.applicationId);
+      if (!app) { setNotice(`${item.applicationName || 'That application'} no longer exists.`); return; }
+      setActiveEnv('all');
+      setSelectedLog(null);
+      if (app.projectId === projectId) setSelectedAppId(app.id);
+      else { pendingAppId.current = app.id; setProjectId(app.projectId); }
+    } catch (cause) { setError(message(cause)); }
+  }, [projectId]);
+
+  useEffect(() => notificationService.subscribeNativeClicks(item => void openAlertApplication(item)), [openAlertApplication]);
 
   const currentApplications = applications.filter(app => app.projectId === projectId);
   const activeApp = currentApplications.find(app => app.id === selectedAppId) || null;
@@ -275,7 +294,7 @@ function MainApp() {
         soundEnabled={soundEnabled} onToggleSound={() => notificationService.updateSettings({ soundAlerts: !soundEnabled })}
         errorCount={scopedLogs.filter(log => log.level === 'error').length} applicationCount={visibleApps.length}
         activeEnv={activeEnv} unreadNotificationCount={unread} onOpenNotifications={() => setNotificationsOpen(true)} />
-      <NotificationToast />
+      <NotificationToast onOpenApplication={item => void openAlertApplication(item)} />
       {selectedProject && appModal && <AddApplicationModal key={appModal === 'new' ? 'new' : appModal.id}
         projectId={selectedProject.id} application={appModal === 'new' ? undefined : appModal}
         onClose={() => setAppModal(null)} onAddApplication={saveApplication} />}
@@ -285,7 +304,7 @@ function MainApp() {
       <CatCustomizerModal isOpen={customizerOpen} currentBreed={catBreed} onSelectBreed={breed => { setCatBreed(breed); CatBreedStorage.setBreed(breed); }}
         onClose={() => setCustomizerOpen(false)} onPet={handlePet} />
       <LogDetailModal log={selectedLog} onClose={() => setSelectedLog(null)} />
-      <NotificationCenterModal isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+      <NotificationCenterModal isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} onOpenApplication={item => void openAlertApplication(item)} />
     </div>
   );
 }

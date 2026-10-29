@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   NotificationItem, 
-  NotificationSettings 
+  NotificationSettings,
+  FAILURE_THRESHOLD_OPTIONS,
+  RUNTIME_ERROR_RATE_OPTIONS,
+  alertContext,
+  formatDuration,
 } from '../domain/NotificationTypes';
 import { notificationService } from '../application/NotificationService';
 import { useDialog } from '../../desktop/application/useDialog';
@@ -11,17 +15,21 @@ import {
   ShieldCheck, 
   Trash2, 
   Send,
-  Check
+  Check,
+  BellOff,
+  Activity
 } from 'lucide-react';
 
 interface NotificationCenterModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenApplication: (item: NotificationItem) => void;
 }
 
 export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = ({
   isOpen,
-  onClose
+  onClose,
+  onOpenApplication
 }) => {
   const [settings, setSettings] = useState<NotificationSettings>(() => notificationService.getSettings());
   const [history, setHistory] = useState<NotificationItem[]>([]);
@@ -77,6 +85,21 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
   const handleSelectCooldown = (sec: number) => {
     notificationService.updateSettings({ cooldownSeconds: sec });
   };
+
+  const handleOpen = (item: NotificationItem) => {
+    if (!item.applicationId) return;
+    onOpenApplication(item);
+    onClose();
+  };
+
+  const optionClass = (selected: boolean) => `px-2.5 py-1 rounded-md text-xs transition-colors ${
+    selected
+      ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 font-bold shadow-xs'
+      : 'bg-neutral-200/60 dark:bg-neutral-800/60 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+  }`;
+
+  const now = Date.now();
+  const mutedApps = Object.entries(settings.mutedApplications).filter(([, muted]) => muted.until > now);
 
   const handleSendTest = async () => {
     setTestState('sending');
@@ -221,18 +244,109 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                       <button
                         key={opt.value}
                         onClick={() => handleSelectCooldown(opt.value)}
-                        className={`px-2.5 py-1 rounded-md text-xs transition-colors ${
-                          settings.cooldownSeconds === opt.value
-                            ? 'bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 font-bold shadow-xs'
-                            : 'bg-neutral-200/60 dark:bg-neutral-800/60 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
-                        }`}
+                        aria-pressed={settings.cooldownSeconds === opt.value}
+                        className={optionClass(settings.cooldownSeconds === opt.value)}
                       >
                         {opt.label}
                       </button>
                     ))}
                   </div>
                 </div>
+
+                <div className="flex items-center gap-2 font-mono" role="group" aria-label="Failed health checks before alerting">
+                  <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Alert after:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {FAILURE_THRESHOLD_OPTIONS.map((value) => (
+                      <button
+                        key={value}
+                        onClick={() => notificationService.updateSettings({ failureThreshold: value })}
+                        aria-pressed={settings.failureThreshold === value}
+                        className={optionClass(settings.failureThreshold === value)}
+                      >
+                        {value}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    failed health {settings.failureThreshold === 1 ? 'check' : 'checks'} in a row
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 dark:text-neutral-400">
+                  Failed deployments always alert immediately.
+                </p>
               </div>
+
+              {/* Runtime error spikes */}
+              <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/40 space-y-2.5">
+                <label className="flex items-start justify-between gap-3 cursor-pointer">
+                  <div className="space-y-0.5">
+                    <span className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-rose-500" />
+                      Runtime error spikes
+                    </span>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                      Alert when live runtime logs show 5xx responses or error-level output above a rate. Loaded history never alerts. Requires a provider account connection.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    aria-label="Runtime error spike alerts"
+                    checked={settings.runtimeErrorAlerts}
+                    onChange={() => notificationService.updateSettings({ runtimeErrorAlerts: !settings.runtimeErrorAlerts })}
+                    className="rounded text-indigo-600 focus:ring-0 cursor-pointer mt-1"
+                  />
+                </label>
+                {settings.runtimeErrorAlerts && (
+                  <div className="flex items-center gap-2 font-mono" role="group" aria-label="Runtime errors per minute">
+                    <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      Threshold:
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {RUNTIME_ERROR_RATE_OPTIONS.map((value) => (
+                        <button
+                          key={value}
+                          onClick={() => notificationService.updateSettings({ runtimeErrorsPerMinute: value })}
+                          aria-pressed={settings.runtimeErrorsPerMinute === value}
+                          className={optionClass(settings.runtimeErrorsPerMinute === value)}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      errors / minute
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Muted applications */}
+              {mutedApps.length > 0 && (
+                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-2">
+                  <span className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-1.5">
+                    <BellOff className="w-4 h-4 text-amber-500" />
+                    Muted applications
+                  </span>
+                  <ul className="space-y-1.5">
+                    {mutedApps.map(([id, muted]) => (
+                      <li key={id} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="truncate">
+                          <strong>{muted.name}</strong>
+                          <span className="text-neutral-500 dark:text-neutral-400"> · {formatDuration(muted.until - now)} left</span>
+                        </span>
+                        <button
+                          onClick={() => notificationService.unmuteApplication(id)}
+                          className="px-2 py-0.5 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                        >
+                          Unmute
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Additional Notification Options */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -323,11 +437,14 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                 {history.map((item) => {
                   const isErr = item.type === 'error';
                   const isRes = item.type === 'resolved';
+                  const context = alertContext(item);
+                  const Row = item.applicationId ? 'button' : 'div';
 
                   return (
-                    <div
+                    <Row
                       key={item.id}
-                      className={`p-2.5 rounded-lg border flex items-start justify-between gap-2.5 ${
+                      {...(item.applicationId ? { type: 'button' as const, onClick: () => handleOpen(item), title: `Open ${item.applicationName} logs` } : {})}
+                      className={`w-full text-left p-2.5 rounded-lg border flex items-start justify-between gap-2.5 ${item.applicationId ? 'cursor-pointer hover:brightness-95 dark:hover:brightness-125' : ''} ${
                         isErr
                           ? 'bg-rose-500/5 border-rose-500/20 text-neutral-800 dark:text-neutral-200'
                           : isRes
@@ -352,12 +469,15 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                             {item.title}
                           </span>
                         </div>
-                        <p className="text-[10px] text-neutral-500 dark:text-neutral-400 line-clamp-1">
+                        {context && (
+                          <p className="text-[9px] text-neutral-400 uppercase tracking-wide">{context}</p>
+                        )}
+                        <p className="text-[10px] text-neutral-500 dark:text-neutral-400 line-clamp-2">
                           {item.body}
                         </p>
                         {item.suppressedRepeats !== undefined && item.suppressedRepeats > 0 && (
                           <span className="text-[9px] text-emerald-600 dark:text-emerald-400">
-                            🛡️ {item.suppressedRepeats} duplicate repeating alerts prevented
+                            🛡️ {item.suppressedRepeats} repeat {item.suppressedRepeats === 1 ? 'alert' : 'alerts'} suppressed during this incident
                           </span>
                         )}
                       </div>
@@ -365,7 +485,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                       <span className="text-[10px] text-neutral-400 shrink-0">
                         {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </span>
-                    </div>
+                    </Row>
                   );
                 })}
               </div>
