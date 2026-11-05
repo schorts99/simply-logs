@@ -19,6 +19,13 @@ const metadata: Record<ProviderType, ProviderMetadata> = {
     docUrl: 'https://docs.netlify.com/deploy/deploy-overview/',
     tokenGuideUrl: 'https://app.netlify.com/user/applications#personal-access-tokens',
   },
+  render: {
+    id: 'render', name: 'Render', icon: 'R', status: 'active',
+    description: 'Service discovery, deployment status, build logs, live application logs and public URL health checks.',
+    supportedSources: ['build', 'runtime', 'serverless', 'probe'],
+    docUrl: 'https://render.com/docs/logging',
+    tokenGuideUrl: 'https://dashboard.render.com/u/settings?add-api-key',
+  },
 };
 
 export class ProviderAdapter implements IProviderAdapter {
@@ -74,11 +81,12 @@ export class ProviderAdapter implements IProviderAdapter {
   }
 
   private target(app: Application): ProviderTarget {
-    const targetId = this.provider === 'vercel' ? app.config.vercelProjectId : app.config.netlifySiteId;
+    const targetId = this.provider === 'vercel' ? app.config.vercelProjectId
+      : this.provider === 'netlify' ? app.config.netlifySiteId : app.config.renderServiceId;
     if (!targetId || !app.config.credentialId) throw new Error('Connect a provider account to sync deployments.');
     return {
       provider: this.provider, targetId, credentialId: app.config.credentialId,
-      teamId: app.config.vercelTeamId, environment: app.environment,
+      teamId: app.config.vercelTeamId, ownerId: app.config.renderOwnerId, environment: app.environment,
     };
   }
 
@@ -91,8 +99,8 @@ export class ProviderAdapter implements IProviderAdapter {
         onLog(this.entry(app, { source: 'build', level: 'info', observation: 'unknown', message: 'No deployments found for this application.' }));
         return;
       }
-      const failed = ['error', 'failed'].includes(latest.state);
-      const ready = ['ready', 'current'].includes(latest.state);
+      const failed = ['error', 'failed', 'build_failed', 'update_failed', 'pre_deploy_failed', 'canceled'].includes(latest.state);
+      const ready = ['ready', 'current', 'live'].includes(latest.state);
       onLog(this.entry(app, {
         id: `${app.id}:deployment:${latest.id}:${latest.state}`,
         source: 'build', monitorKind: 'deployment', level: failed ? 'error' : 'info',
@@ -102,7 +110,7 @@ export class ProviderAdapter implements IProviderAdapter {
       }));
       if (this.provider === 'netlify') return;
       try {
-        const buildEvents = await this.desktop().events({ ...target, deploymentId: latest.id });
+        const buildEvents = await this.desktop().events({ ...target, deploymentId: latest.id, createdAt: latest.createdAt });
         for (const event of buildEvents) {
           onLog(this.entry(app, {
             id: `${app.id}:build:${event.id}`, source: 'build', level: event.level,
@@ -154,7 +162,8 @@ export class ProviderAdapter implements IProviderAdapter {
           for (const event of history.events) {
             const { id, deploymentId, messageTruncated, logs, functionName, requestId, ...fields } = event;
             emit(this.entry(app, {
-              ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`, requestId: requestId || (this.provider === 'vercel' ? id : undefined),
+              ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`,
+              requestId: requestId || (this.provider === 'vercel' || (this.provider === 'render' && fields.statusCode !== undefined) ? id : undefined),
               payload: {
                 deploymentId, messageTruncated, historical: true, logs,
                 ...(functionName ? { functionName, requestId, requestPath: fields.path } : {}),
@@ -194,6 +203,7 @@ export class ProviderAdapter implements IProviderAdapter {
           const { id, messageTruncated, functionName, ...fields } = event;
           emit(this.entry(app, {
             ...fields, id: `${app.id}:runtime:${deploymentId}:${id}`,
+            requestId: this.provider === 'render' && fields.statusCode !== undefined ? id : undefined,
             payload: {
               deploymentId, messageTruncated,
               ...(functionName ? { functionName, requestId: fields.requestId, requestPath: fields.path } : {}),
@@ -228,7 +238,7 @@ export class ProviderAdapter implements IProviderAdapter {
     if (app.deploymentUrl) schedule(() => this.triggerHealthProbe(app, emit), 15000);
     if (app.config.connectionMode === 'account') schedule(() => this.checkDeploymentStatus(app, emit), 30000);
     if (app.config.connectionMode === 'account') {
-      if (app.environment === 'development') {
+      if (app.environment === 'development' && this.provider !== 'render') {
         runtimeWarning(`${metadata[this.provider].name} runtime logs require a production or preview deployment, not local development.`);
       } else schedule(syncRuntime, 30000);
     }

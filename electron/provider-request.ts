@@ -4,7 +4,8 @@ import { publicRequest, type NetworkResponse } from './network';
 export type Request = typeof publicRequest;
 
 export function providerUrl(provider: Provider, path: string, teamId?: string): URL {
-  const url = new URL(path, provider === 'vercel' ? 'https://api.vercel.com' : 'https://api.netlify.com');
+  const url = new URL(path, provider === 'vercel' ? 'https://api.vercel.com'
+    : provider === 'netlify' ? 'https://api.netlify.com' : 'https://api.render.com');
   if (provider === 'vercel' && teamId) url.searchParams.set('teamId', teamId);
   return url;
 }

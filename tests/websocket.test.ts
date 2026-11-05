@@ -65,6 +65,20 @@ test('WebSockets pin validated DNS, disable redirects and compression, bound fra
   assert.equal(values.length, 1);
 });
 
+test('Render-style WebSocket credentials are sent in the secure upgrade headers, not as a message', async () => {
+  const fixture = socketFixture();
+  const pending = publicWebSocket(
+    'wss://1.1.1.1/v1/logs/subscribe', {}, () => {}, new AbortController().signal,
+    fixture.connect, { Authorization: 'Bearer render-token' },
+  );
+  await fixture.connected;
+  assert.deepEqual(fixture.options().headers, { Authorization: 'Bearer render-token' });
+  fixture.socket.emit('open');
+  assert.deepEqual(fixture.sent, []);
+  fixture.socket.emit('close', 1000, Buffer.alloc(0));
+  await pending;
+});
+
 test('quiet connected WebSockets have no idle deadline and remain cancellable', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] });
   const fixture = socketFixture();

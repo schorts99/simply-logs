@@ -2,11 +2,17 @@
 
 All notable changes to Simply Logs are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Render support.** Discover Render services, monitor deployment status, retrieve build logs, and load or stream app/request logs using a Render API key.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added
 
-- **Runtime error spike alerts.** For applications connected through a Vercel or Netlify account, Simply Logs alerts when live runtime, Function or Edge logs show 5xx responses or error-level output at or above a per-minute rate (3, 5, 10 or 25; default 5). Isolated errors and loaded history never alert. A spike recovers when a request succeeds after the recovery window. Can be turned off in alert settings.
+- **Runtime error spike alerts.** For applications connected through a Vercel, Netlify or Render account, Simply Logs alerts when live runtime, Function or Edge logs show 5xx responses or error-level output at or above a per-minute rate (3, 5, 10 or 25; default 5). Isolated errors and loaded history never alert. A spike recovers when a request succeeds after the recovery window. Can be turned off in alert settings.
 - **Health check failure threshold.** Choose how many failed health checks in a row trigger an alert: 1, 2, 3 or 5.
 - **Mute an application for an hour** from its alert toast. Muted applications appear in alert settings with the time remaining and an **Unmute** button.
 - **Click an alert to open its logs.** Toasts, Recent Notifications entries and desktop banners focus the window and select that application, switching projects if needed.

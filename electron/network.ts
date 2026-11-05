@@ -74,6 +74,7 @@ export async function resolvePublicHost(
 export async function publicWebSocket(
   input: string, authentication: Record<string, unknown>, onValue: (value: unknown) => void, signal: AbortSignal,
   connect = (url: URL, options: WebSocket.ClientOptions) => new WebSocket(url, options),
+  headers?: Record<string, string>,
 ): Promise<void> {
   const url = new URL(input);
   if (url.protocol !== 'wss:') throw new Error('Runtime log streams require a secure WebSocket URL.');
@@ -92,7 +93,7 @@ export async function publicWebSocket(
     });
     const socket = connect(url, {
       agent, family: address.family, followRedirects: false, handshakeTimeout: 8000,
-      maxPayload: 2 * 1024 * 1024, perMessageDeflate: false,
+      maxPayload: 2 * 1024 * 1024, perMessageDeflate: false, headers,
     });
     let settled = false;
     const finish = (error?: Error) => {
@@ -110,7 +111,7 @@ export async function publicWebSocket(
       : undefined));
     socket.once('open', () => {
       if (settled) return;
-      socket.send(JSON.stringify(authentication), error => { if (error) finish(error); });
+      if (!headers) socket.send(JSON.stringify(authentication), error => { if (error) finish(error); });
     });
     socket.on('message', (data, isBinary) => {
       if (settled) return;

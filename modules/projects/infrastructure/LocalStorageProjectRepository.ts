@@ -71,12 +71,14 @@ export class LocalStorageProjectRepository implements IProjectRepository {
     for (const app of apps) {
       if (!app.config || typeof app.config !== 'object' || Array.isArray(app.config) ||
         typeof app.projectId !== 'string' || typeof app.name !== 'string' || !app.name.trim() ||
-        typeof app.slug !== 'string' || !['vercel', 'netlify'].includes(app.providerType) ||
+        typeof app.slug !== 'string' || !['vercel', 'netlify', 'render'].includes(app.providerType) ||
         !['production', 'preview', 'development'].includes(app.environment) ||
         (app.deploymentUrl !== undefined && typeof app.deploymentUrl !== 'string') ||
         (app.config.connectionMode !== undefined && !['account', 'url'].includes(app.config.connectionMode)) ||
         (app.config.framework !== undefined && typeof app.config.framework !== 'string') ||
-        (app.config.credentialId !== undefined && typeof app.config.credentialId !== 'string')) {
+        (app.config.credentialId !== undefined && typeof app.config.credentialId !== 'string') ||
+        (app.config.renderServiceId !== undefined && typeof app.config.renderServiceId !== 'string') ||
+        (app.config.renderOwnerId !== undefined && typeof app.config.renderOwnerId !== 'string')) {
         throw new Error('A saved application has an invalid format. Your data has not been overwritten.');
       }
       if (app.config.apiToken) {

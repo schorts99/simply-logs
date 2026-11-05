@@ -60,6 +60,8 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
         return <span className="text-[11px] font-bold">▲</span>;
       case 'netlify':
         return <span className="text-[11px]">🌐</span>;
+      case 'render':
+        return <span className="text-[10px] font-bold">R</span>;
       default:
         return <Server className="w-3.5 h-3.5" />;
     }
@@ -183,7 +185,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                   onClick={onOpenAddAppModal}
                   className="block mx-auto mt-1 text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
                 >
-                  + Add Vercel or Netlify app
+                  + Add a provider app
                 </button>
               </div>
             ) : (

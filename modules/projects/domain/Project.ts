@@ -2,7 +2,7 @@
  * Domain Models for Projects & Applications (Vertical Slice: Projects)
  */
 
-export type ProviderType = 'vercel' | 'netlify';
+export type ProviderType = 'vercel' | 'netlify' | 'render';
 export type Environment = 'production' | 'preview' | 'development';
 export type ServiceHealth = 'healthy' | 'warning' | 'error' | 'deploying' | 'idle';
 
@@ -29,6 +29,8 @@ export interface Application {
     vercelProjectId?: string;
     vercelTeamId?: string;
     netlifySiteId?: string;
+    renderServiceId?: string;
+    renderOwnerId?: string;
     credentialId?: string;
     connectionMode: 'account' | 'url';
     framework?: string;

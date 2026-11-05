@@ -1,4 +1,4 @@
-export type Provider = 'vercel' | 'netlify';
+export type Provider = 'vercel' | 'netlify' | 'render';
 
 export interface DiscoveredApplication {
   name: string;
@@ -7,6 +7,8 @@ export interface DiscoveredApplication {
   deploymentUrl?: string;
   projectId?: string;
   siteId?: string;
+  renderServiceId?: string;
+  renderOwnerId?: string;
 }
 
 export interface ProviderTarget {
@@ -14,6 +16,7 @@ export interface ProviderTarget {
   targetId: string;
   credentialId: string;
   teamId?: string;
+  ownerId?: string;
   environment?: 'production' | 'preview' | 'development';
 }
 
@@ -83,7 +86,7 @@ export interface DesktopBridge {
     { apiToken: string; credentialId?: never } | { credentialId: string; apiToken?: never }
   )): Promise<DiscoveredApplication[]>;
   deployments(input: ProviderTarget): Promise<Deployment[]>;
-  events(input: ProviderTarget & { deploymentId: string }): Promise<BuildEvent[]>;
+  events(input: ProviderTarget & { deploymentId: string; createdAt?: number }): Promise<BuildEvent[]>;
   runtimeDeployment(input: ProviderTarget): Promise<string | null>;
   loadRuntimeHistory(
     input: ProviderTarget,

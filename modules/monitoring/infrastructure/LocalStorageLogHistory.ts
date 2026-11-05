@@ -13,7 +13,7 @@ function isLogEntry(value: unknown): value is LogEntry {
   const log = value as Record<string, unknown>;
   return ['id', 'applicationId', 'applicationName', 'message'].every(key => typeof log[key] === 'string') &&
     typeof log.timestamp === 'number' && Number.isFinite(log.timestamp) &&
-    ['vercel', 'netlify'].includes(log.providerType as string) &&
+    ['vercel', 'netlify', 'render'].includes(log.providerType as string) &&
     ['production', 'preview', 'development'].includes(log.environment as string) &&
     ['info', 'warn', 'error', 'debug'].includes(log.level as string) &&
     ['runtime', 'edge', 'build', 'serverless', 'probe'].includes(log.source as string) &&

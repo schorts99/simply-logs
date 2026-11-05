@@ -400,7 +400,7 @@ export const LogStreamViewer: React.FC<LogStreamViewerProps> = ({
                 {/* App Name & Provider Icon */}
                 <div className="shrink-0 flex items-center gap-1 text-[10px] text-neutral-600 dark:text-neutral-400 pt-0.5">
                   <span className="font-bold text-neutral-800 dark:text-neutral-200">
-                    {log.providerType === 'netlify' ? '🌐' : '▲'}
+                    {log.providerType === 'netlify' ? '🌐' : log.providerType === 'render' ? 'R' : '▲'}
                   </span>
                   <span className="truncate max-w-[110px] font-medium">{log.applicationName}</span>
                 </div>

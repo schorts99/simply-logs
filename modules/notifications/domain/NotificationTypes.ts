@@ -1,4 +1,4 @@
-import type { Environment } from '../../projects/domain/Project';
+import type { Environment, ProviderType } from '../../projects/domain/Project';
 
 export type NotificationType = 'error' | 'resolved' | 'warning' | 'info';
 export type IncidentKind = 'health' | 'deployment' | 'runtime';
@@ -11,7 +11,7 @@ export interface NotificationItem {
   type: NotificationType;
   applicationId?: string;
   applicationName?: string;
-  providerType?: 'vercel' | 'netlify';
+  providerType?: ProviderType;
   environment?: Environment;
   kind?: IncidentKind;
   read: boolean;
@@ -39,7 +39,7 @@ export interface NotificationSettings {
 export interface IncidentTracker {
   appId: string;
   appName: string;
-  providerType?: 'vercel' | 'netlify';
+  providerType?: ProviderType;
   environment?: Environment;
   kind: IncidentKind;
   status: 'pending' | 'active';
@@ -84,6 +84,7 @@ export function formatRelativeTime(timestamp: number, now: number): string {
 }
 
 export function alertContext(item: Pick<NotificationItem, 'environment' | 'providerType'>): string {
-  const provider = item.providerType === 'netlify' ? 'Netlify' : item.providerType === 'vercel' ? 'Vercel' : undefined;
+  const provider = item.providerType === 'netlify' ? 'Netlify' : item.providerType === 'vercel' ? 'Vercel'
+    : item.providerType === 'render' ? 'Render' : undefined;
   return [item.environment, provider].filter(Boolean).join(' · ');
 }

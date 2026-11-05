@@ -4,6 +4,7 @@ import type { BuildEvent, Deployment, DiscoveredApplication, ProbeResult, Provid
 import { publicRequest, publicWebSocket, validatePublicUrl } from './network';
 import { providerUrl, providerRequest, type Request } from './provider-request';
 import { netlifyRuntimeDeployment, netlifyRuntimeHistory, streamNetlifyRuntimeLogs } from './netlify-runtime';
+import { renderBuildEvents, renderRuntimeHistory, streamRenderRuntimeLogs } from './render-runtime';
 
 export function probeMetadata(headers: Record<string, string>) {
   const cache = headers['x-vercel-cache'];
@@ -45,6 +46,38 @@ export async function probe(url: string, send: Request = publicRequest): Promise
 export async function discover(
   provider: Provider, token: string, teamId?: string, send: Request = publicRequest,
 ): Promise<DiscoveredApplication[]> {
+  if (provider === 'render') {
+    const items: DiscoveredApplication[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 100; page++) {
+      const url = providerUrl('render', '/v1/services');
+      url.searchParams.set('limit', '100');
+      url.searchParams.set('includePreviews', 'true');
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const data = JSON.parse((await providerRequest(url, token, send)).body);
+      if (!Array.isArray(data)) throw new Error('Render returned an unexpected service list.');
+      for (const item of data) {
+        const service = item?.service;
+        if (typeof service?.id !== 'string' || typeof service.name !== 'string' ||
+            typeof service.ownerId !== 'string') continue;
+        const serviceUrl = typeof service.serviceDetails?.url === 'string' ? service.serviceDetails.url : undefined;
+        items.push({
+          name: service.name, slug: service.slug || service.name,
+          framework: `Render ${String(service.type || 'service').replaceAll('_', ' ')}`,
+          deploymentUrl: serviceUrl ? (serviceUrl.startsWith('https://') ? serviceUrl : `https://${serviceUrl}`) : undefined,
+          renderServiceId: service.id, renderOwnerId: service.ownerId,
+        });
+      }
+      if (data.length < 100) break;
+      const next = data.at(-1)?.cursor;
+      if (typeof next !== 'string' || !next || next === cursor) {
+        throw new Error('Render returned an invalid service pagination cursor.');
+      }
+      cursor = next;
+      if (page === 99) throw new Error('Too many services to discover at once. Narrow the account or workspace.');
+    }
+    return items;
+  }
   const items: DiscoveredApplication[] = [];
   let cursor: string | undefined;
   let page = 1;
@@ -77,6 +110,22 @@ export async function discover(
 }
 
 export async function deployments(target: ProviderTarget, token: string, send: Request = publicRequest): Promise<Deployment[]> {
+  if (target.provider === 'render') {
+    const url = providerUrl('render', `/v1/services/${encodeURIComponent(target.targetId)}/deploys`);
+    url.searchParams.set('limit', '10');
+    const data = JSON.parse((await providerRequest(url, token, send)).body);
+    if (!Array.isArray(data)) throw new Error('Render returned an unexpected deployment list.');
+    return data.flatMap((item: Record<string, any>) => {
+      const deploy = item?.deploy;
+      if (typeof deploy?.id !== 'string') return [];
+      return [{
+        id: deploy.id,
+        state: String(deploy.status || 'unknown').toLowerCase(),
+        commit: deploy.commit?.id,
+        createdAt: Date.parse(deploy.createdAt) || Date.now(),
+      }];
+    });
+  }
   const url = providerUrl(target.provider,
     target.provider === 'vercel' ? '/v6/deployments' : `/api/v1/sites/${encodeURIComponent(target.targetId)}/deploys`,
     target.teamId);
@@ -100,6 +149,18 @@ export async function deployments(target: ProviderTarget, token: string, send: R
 export async function runtimeDeployment(
   target: ProviderTarget, token: string, send: Request = publicRequest,
 ): Promise<string | null> {
+  if (target.provider === 'render') {
+    const url = providerUrl('render', `/v1/services/${encodeURIComponent(target.targetId)}/deploys`);
+    url.searchParams.set('status', 'live');
+    url.searchParams.set('limit', '1');
+    const data = JSON.parse((await providerRequest(url, token, send)).body);
+    if (!Array.isArray(data)) throw new Error('Render returned an unexpected live deployment list.');
+    const deployment = data[0]?.deploy;
+    if (deployment && (typeof deployment.id !== 'string' || deployment.status !== 'live')) {
+      throw new Error('Render returned an invalid live deployment.');
+    }
+    return deployment?.id || null;
+  }
   if (target.provider === 'netlify') return netlifyRuntimeDeployment(target, token, send);
   if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
   if (target.environment !== 'preview') {
@@ -188,6 +249,11 @@ export async function runtimeHistory(
   target: ProviderTarget, token: string, signal: AbortSignal,
   send: Request = publicRequest, now = Date.now(),
 ): Promise<RuntimeHistory> {
+  if (target.provider === 'render') {
+    const deploymentId = await runtimeDeployment(target, token, send);
+    if (!deploymentId) return { events: [], truncated: false };
+    return renderRuntimeHistory(target, deploymentId, token, signal, send, now);
+  }
   if (target.provider === 'netlify') return netlifyRuntimeHistory(target, token, signal, send, now);
   if (target.environment === 'development') throw new Error('Vercel runtime logs require a production or preview deployment, not local development.');
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
@@ -235,6 +301,7 @@ export async function streamRuntimeLogs(
   target: ProviderTarget & { deploymentId: string }, token: string,
   onLog: (event: RuntimeEvent) => void, signal: AbortSignal, send: Request = publicRequest, openSocket = publicWebSocket,
 ): Promise<void> {
+  if (target.provider === 'render') return streamRenderRuntimeLogs(target, token, onLog, signal, openSocket);
   if (target.provider === 'netlify') return streamNetlifyRuntimeLogs(target, token, onLog, signal, send, openSocket);
   signal.throwIfAborted();
   const url = providerUrl('vercel',
@@ -253,8 +320,12 @@ export async function streamRuntimeLogs(
 }
 
 export async function events(
-  target: ProviderTarget & { deploymentId: string }, token: string, send: Request = publicRequest,
+  target: ProviderTarget & { deploymentId: string; createdAt?: number }, token: string, send: Request = publicRequest,
 ): Promise<BuildEvent[]> {
+  if (target.provider === 'render') {
+    if (target.createdAt === undefined) throw new Error('Render build log start time is missing.');
+    return renderBuildEvents(target, token, target.createdAt, new AbortController().signal, send);
+  }
   if (target.provider !== 'vercel') {
     throw new Error('Netlify build logs are available in its dashboard, not through the public REST API.');
   }

@@ -33,7 +33,7 @@ function text(value: unknown, max = 1024): string {
 }
 
 function provider(value: unknown): Provider {
-  if (value !== 'vercel' && value !== 'netlify') throw new Error('Unsupported provider.');
+  if (value !== 'vercel' && value !== 'netlify' && value !== 'render') throw new Error('Unsupported provider.');
   return value;
 }
 
@@ -48,6 +48,7 @@ function target(value: unknown): ProviderTarget {
     targetId: text(input.targetId, 256),
     credentialId: text(input.credentialId, 256),
     teamId: input.teamId ? text(input.teamId, 256) : undefined,
+    ownerId: input.ownerId ? text(input.ownerId, 256) : undefined,
     environment: input.environment as ProviderTarget['environment'],
   };
 }
@@ -150,7 +151,10 @@ else {
     });
     handle('providers:events', async input => {
       const selected = target(input);
-      return events({ ...selected, deploymentId: text(input.deploymentId, 256) }, await credentials.get(selected.credentialId));
+      return events({
+        ...selected, deploymentId: text(input.deploymentId, 256),
+        createdAt: typeof input.createdAt === 'number' && Number.isFinite(input.createdAt) ? input.createdAt : undefined,
+      }, await credentials.get(selected.credentialId));
     });
     handle('providers:runtime-deployment', async input => {
       const selected = target(input);

@@ -28,7 +28,8 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
   const [loadingCredentials, setLoadingCredentials] = useState(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const [teamId, setTeamId] = useState(application?.config.vercelTeamId || '');
-  const [targetId, setTargetId] = useState(application?.config.vercelProjectId || application?.config.netlifySiteId || '');
+  const [ownerId, setOwnerId] = useState(application?.config.renderOwnerId || '');
+  const [targetId, setTargetId] = useState(application?.config.vercelProjectId || application?.config.netlifySiteId || application?.config.renderServiceId || '');
   const [framework, setFramework] = useState(application?.config.framework || '');
   const [discovered, setDiscovered] = useState<DiscoveredApplication[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +93,8 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           throw new Error('Use a public HTTPS URL without credentials or a custom port.');
         }
       }
-      if (mode === 'account' && (!targetId.trim() || (!token.trim() && !savedCredential))) {
-        throw new Error('Enter or choose a saved token, then select an application or provide its project/site ID.');
+      if (mode === 'account' && (!targetId.trim() || (!token.trim() && !savedCredential) || (provider === 'render' && !ownerId.trim()))) {
+        throw new Error('Enter or choose a saved token, then select an application or provide its provider ID.');
       }
       setBusy('save');
       const app: Application = {
@@ -106,6 +107,8 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           credentialId: mode === 'account' ? savedCredential : undefined,
           vercelProjectId: mode === 'account' && provider === 'vercel' ? targetId.trim() : undefined,
           netlifySiteId: mode === 'account' && provider === 'netlify' ? targetId.trim() : undefined,
+          renderServiceId: mode === 'account' && provider === 'render' ? targetId.trim() : undefined,
+          renderOwnerId: mode === 'account' && provider === 'render' ? ownerId.trim() : undefined,
           vercelTeamId: provider === 'vercel' && mode === 'account' ? teamId.trim() || undefined : undefined,
         },
       };
@@ -119,7 +122,8 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
 
   const select = (item: DiscoveredApplication) => {
     setName(item.name); setUrl(item.deploymentUrl || ''); setFramework(item.framework || '');
-    setTargetId(item.projectId || item.siteId || '');
+    setTargetId(item.projectId || item.siteId || item.renderServiceId || '');
+    setOwnerId(item.renderOwnerId || '');
   };
 
   return (
@@ -134,8 +138,8 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
           <fieldset disabled={Boolean(busy)} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs space-y-1 block">Platform
-                <select aria-label="Platform" value={provider} onChange={event => { setProvider(event.target.value as ProviderType); setCredentialId(''); setToken(''); setTeamId(''); setTargetId(''); setDiscovered(null); setError(null); }} className={`${inputClass} mt-1`}>
-                  <option value="vercel">Vercel</option><option value="netlify">Netlify</option>
+                <select aria-label="Platform" value={provider} onChange={event => { setProvider(event.target.value as ProviderType); setCredentialId(''); setToken(''); setTeamId(''); setOwnerId(''); setTargetId(''); setDiscovered(null); setError(null); }} className={`${inputClass} mt-1`}>
+                  <option value="vercel">Vercel</option><option value="netlify">Netlify</option><option value="render">Render</option>
                 </select>
               </label>
               <label className="text-xs space-y-1 block">Connection
@@ -148,7 +152,7 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
               <div className="rounded-xl p-3 space-y-3 bg-neutral-100 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800">
                 <label className="text-xs block">Access token
                   <select aria-label="Access token" value={credentialId} disabled={loadingCredentials}
-                    onChange={event => { setCredentialId(event.target.value); setToken(''); setTargetId(''); setDiscovered(null); setError(null); }}
+                    onChange={event => { setCredentialId(event.target.value); setToken(''); setTargetId(''); setOwnerId(''); setDiscovered(null); setError(null); }}
                     className={`${inputClass} mt-1`}>
                     <option value="">Enter a new token</option>
                     {[...savedCredentials].map(([id, appName]) => <option key={id} value={id}>Token from {appName}</option>)}
@@ -166,24 +170,31 @@ export const AddApplicationModal: React.FC<Props> = ({ projectId, application, o
                 {provider === 'vercel' && <label className="text-xs block">Team ID (optional)
                   <input aria-label="Team ID" value={teamId} onChange={event => { setTeamId(event.target.value); setTargetId(''); setDiscovered(null); }} className={`${inputClass} mt-1`} />
                 </label>}
+                {provider === 'render' && <label className="text-xs block">Workspace ID
+                  <input aria-label="Workspace ID" value={ownerId} onChange={event => setOwnerId(event.target.value)} className={`${inputClass} mt-1`} placeholder="Filled when a service is discovered" />
+                </label>}
                 <button type="button" disabled={loadingCredentials || (!token.trim() && !credentialId)} onClick={() => void run('discover')} className="flex items-center gap-2 text-xs text-indigo-500 font-medium">
                   <RefreshCw className="w-3.5 h-3.5" /> Discover applications
                 </button>
                 {discovered && <div className="max-h-36 overflow-y-auto space-y-1">
                   {discovered.length === 0 ? <p className="text-xs text-neutral-500">No applications found. Check the selected account and team.</p> : discovered.map(item => (
-                    <button key={item.projectId || item.siteId} type="button" onClick={() => select(item)} className="w-full text-left text-xs p-2 rounded-lg bg-white dark:bg-neutral-900 hover:ring-1 ring-indigo-500 flex justify-between">
-                      {item.name}{targetId === (item.projectId || item.siteId) && <CheckCircle className="w-3.5 h-3.5 text-indigo-500" />}
+                    <button key={item.projectId || item.siteId || item.renderServiceId} type="button" onClick={() => select(item)} className="w-full text-left text-xs p-2 rounded-lg bg-white dark:bg-neutral-900 hover:ring-1 ring-indigo-500 flex justify-between">
+                      {item.name}{targetId === (item.projectId || item.siteId || item.renderServiceId) && <CheckCircle className="w-3.5 h-3.5 text-indigo-500" />}
                     </button>
                   ))}
                 </div>}
-                <label className="text-xs block">{provider === 'vercel' ? 'Project ID' : 'Site ID'}
-                  <input aria-label={provider === 'vercel' ? 'Project ID' : 'Site ID'} value={targetId} onChange={event => setTargetId(event.target.value)} className={`${inputClass} mt-1`} placeholder="Select above or enter the provider ID" />
+                <label className="text-xs block">{provider === 'vercel' ? 'Project ID' : provider === 'netlify' ? 'Site ID' : 'Service ID'}
+                  <input aria-label={provider === 'vercel' ? 'Project ID' : provider === 'netlify' ? 'Site ID' : 'Service ID'} value={targetId} onChange={event => setTargetId(event.target.value)} className={`${inputClass} mt-1`} placeholder="Select above or enter the provider ID" />
                 </label>
                 <p className="text-[11px] text-neutral-500">Tokens are never saved in browser storage. They use your OS keychain, or stay in memory when secure storage is unavailable.</p>
-                <p className="text-[11px] text-neutral-500">{provider === 'vercel' ? 'Includes deployment status, recent build logs, past-hour runtime history and live runtime logs. Production follows the active deployment; preview follows the latest ready preview.' : 'Includes deployment status, past-hour Function/Edge Function history and live logs for the selected deployment. Production follows the published deploy; preview follows the latest ready deploy preview or branch deploy. Up to 10 Functions are monitored. Build logs stay in the Netlify dashboard.'} Runtime logs require token permissions and provider access; local development is not supported.</p>
+                <p className="text-[11px] text-neutral-500">{provider === 'vercel'
+                  ? 'Includes deployment status, recent build logs, past-hour runtime history and live runtime logs. Production follows the active deployment; preview follows the latest ready preview.'
+                  : provider === 'netlify'
+                    ? 'Includes deployment status, past-hour Function/Edge Function history and live logs for the selected deployment. Production follows the published deploy; preview follows the latest ready deploy preview or branch deploy. Up to 10 Functions are monitored. Build logs stay in the Netlify dashboard.'
+                    : 'Includes service deployment status, build logs, past-hour application/request history and live logs. Discover a service to also fill its workspace ID. Render static sites do not emit runtime logs.'} Runtime logs require token permissions and provider access; local development is not supported.</p>
               </div>
             )}
-            {mode === 'url' && <p className="text-[11px] text-neutral-500">URL-only monitoring checks health, not application logs. Connect a Vercel or Netlify account for runtime logs; Vercel also provides build logs.</p>}
+            {mode === 'url' && <p className="text-[11px] text-neutral-500">URL-only monitoring checks health, not application logs. Connect a Vercel, Netlify or Render account for provider logs.</p>}
             <label className="text-xs block" htmlFor="app-name">Application name
               <input data-autofocus id="app-name" required maxLength={100} value={name} onChange={event => setName(event.target.value)} className={`${inputClass} mt-1`} placeholder="e.g. My storefront" />
             </label>

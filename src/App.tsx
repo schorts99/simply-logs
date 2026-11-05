@@ -278,7 +278,7 @@ function MainApp() {
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
                 <img src="./icon.svg" alt="" className="w-16 h-16 opacity-80" />
                 <h2 className="text-lg font-semibold">Give your cat something to watch</h2>
-                <p className="text-sm text-neutral-500 max-w-sm">Connect Vercel or Netlify for deployments, or monitor a public HTTPS URL. Real checks start as soon as you add an application.</p>
+                <p className="text-sm text-neutral-500 max-w-sm">Connect Vercel, Netlify or Render for deployments, or monitor a public HTTPS URL. Real checks start as soon as you add an application.</p>
                 <button onClick={() => setAppModal('new')} className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Add your first application</button>
               </div>
             ) : <LogStreamViewer logs={scopedLogs} isStreaming={isStreaming} onToggleStreaming={toggleStreaming}

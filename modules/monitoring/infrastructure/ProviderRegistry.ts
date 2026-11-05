@@ -9,6 +9,7 @@ export class ProviderRegistry {
   private constructor() {
     this.register(new ProviderAdapter('vercel'));
     this.register(new ProviderAdapter('netlify'));
+    this.register(new ProviderAdapter('render'));
   }
 
   public static getInstance(): ProviderRegistry {
